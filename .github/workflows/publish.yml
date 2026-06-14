@@ -26,7 +26,8 @@ jobs:
           # install wasm-bindgen CLI and generate JS glue for bundler target
           cargo install -f wasm-bindgen-cli
           mkdir -p build
-          wasm-bindgen target/wasm32-unknown-unknown/release/iceberg.wasm --out-dir build --target bundler
+          # Emit files named `index.js` / `index_bg.wasm` so wrangler's `main = "build/index.js"` matches
+          wasm-bindgen target/wasm32-unknown-unknown/release/iceberg.wasm --out-dir build --target bundler --out-name index
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
