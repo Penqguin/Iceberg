@@ -1,0 +1,10 @@
+name = "iceberg"
+main = "build/index.js"
+compatibility_date = "2026-06-14"
+
+[vars]
+WHITELIST = "penqguin"
+
+[build]
+command = "cargo build --release --target wasm32-unknown-unknown && worker-build --release"
+watch_dir = "src"
