@@ -22,43 +22,76 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             Response::from_json(&serde_json::json!({ "status": "ok" }))
         })
         .get_async("/commits/latest", |req, ctx| async move {
+            let cache = Cache::default();
+            let url = req.url()?;
+            if let Some(resp) = cache.get(&url, true).await? {
+                return Ok(resp);
+            }
+
             let auth = match resolve_auth(&req, &ctx.env).await {
                 Ok(a) => a,
                 Err(e) => return e.to_response(),
             };
 
             match github::get_most_recent_commit(&auth.username, &auth.token).await {
-                Ok(commit) => Response::from_json(&commit),
+                Ok(commit) => {
+                    let mut resp = Response::from_json(&commit)?;
+                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
+                    cache.put(url, resp.cloned()?).await?;
+                    Ok(resp)
+                }
                 Err(e) => e.to_response(),
             }
         })
         .get_async("/v2/commits/latest", |req, ctx| async move {
+            let cache = Cache::default();
+            let url = req.url()?;
+            if let Some(resp) = cache.get(&url, true).await? {
+                return Ok(resp);
+            }
+
             let auth = match resolve_auth(&req, &ctx.env).await {
                 Ok(a) => a,
                 Err(e) => return e.to_response(),
             };
 
-            let limit = req.url()
-                .ok()
-                .and_then(|u| u.query_pairs().find(|(k, _)| k == "limit").map(|(_, v)| v.into_owned()))
+            let limit = url.query_pairs()
+                .find(|(k, _)| k == "limit")
+                .map(|(_, v)| v.into_owned())
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(10);
             
             let limit = if limit == 0 { 10 } else { limit };
 
             match github::get_commits_list(&auth.username, &auth.token, limit).await {
-                Ok(commits) => Response::from_json(&commits),
+                Ok(commits) => {
+                    let mut resp = Response::from_json(&commits)?;
+                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
+                    cache.put(url, resp.cloned()?).await?;
+                    Ok(resp)
+                }
                 Err(e) => e.to_response(),
             }
         })
         .get_async("/streak", |req, ctx| async move {
+            let cache = Cache::default();
+            let url = req.url()?;
+            if let Some(resp) = cache.get(&url, true).await? {
+                return Ok(resp);
+            }
+
             let auth = match resolve_auth(&req, &ctx.env).await {
                 Ok(a) => a,
                 Err(e) => return e.to_response(),
             };
 
             match github::get_streak_info(&auth.username, &auth.token).await {
-                Ok(streak) => Response::from_json(&streak),
+                Ok(streak) => {
+                    let mut resp = Response::from_json(&streak)?;
+                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
+                    cache.put(url, resp.cloned()?).await?;
+                    Ok(resp)
+                }
                 Err(e) => e.to_response(),
             }
         })
