@@ -28,6 +28,10 @@ jobs:
           mkdir -p build
           # Emit files named `index.js` / `index_bg.wasm` so wrangler's `main = "build/index.js"` matches
           wasm-bindgen target/wasm32-unknown-unknown/release/iceberg.wasm --out-dir build --target bundler --out-name index
+          # Ensure generated glue exports reset helper expected by the bundle
+          if grep -q "function __wbg_reset_state" build/index_bg.js; then
+            sed -i.bak 's/function __wbg_reset_state\s*()/export function __wbg_reset_state()/' build/index_bg.js || true
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
