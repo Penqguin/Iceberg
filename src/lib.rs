@@ -24,8 +24,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(&url, true).await? {
-                return Ok(resp);
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp.cloned()?);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -37,7 +37,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Ok(commit) => {
                     let mut resp = Response::from_json(&commit)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url, resp.cloned()?).await?;
+                    cache.put(url.to_string(), resp.cloned()?).await?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),
@@ -46,8 +46,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v2/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(&url, true).await? {
-                return Ok(resp);
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp.cloned()?);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -67,7 +67,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Ok(commits) => {
                     let mut resp = Response::from_json(&commits)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url, resp.cloned()?).await?;
+                    cache.put(url.to_string(), resp.cloned()?).await?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),
@@ -76,8 +76,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/streak", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(&url, true).await? {
-                return Ok(resp);
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp.cloned()?);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -89,7 +89,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Ok(streak) => {
                     let mut resp = Response::from_json(&streak)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url, resp.cloned()?).await?;
+                    cache.put(url.to_string(), resp.cloned()?).await?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),

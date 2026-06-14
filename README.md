@@ -174,7 +174,7 @@ Environment variables can be supplied using a `.env` file in the root directory:
    ```
 5. Test the application in your browser:
    - Docs page: `https://iceberg.penqguin.com/`
-   - Test whitelisted user commit: `https://iceberg.penqguin.com/commits/latest?username=jasonlovesdoggo`
+   - Test whitelisted user commit: `https://iceberg.penqguin.com/commits/latest?username=penqguin`
    - Test health check: `https://iceberg.penqguin.com/healthcheck`
 
 ---
@@ -185,12 +185,12 @@ You can build and run the application in a secure Docker container:
 
 ### Build Image
 ```bash
-docker build -t Iceberg .
+docker build -t iceberg .
 ```
 
 ### Run Container
 ```bash
-docker run -p 8080:8080 --env-file .env Iceberg
+docker run -p 8080:8080 --env-file .env iceberg
 ```
 
 ## License

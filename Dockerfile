@@ -1,50 +1,59 @@
 # Stage 1: Build the Rust application (WASM)
-FROM rust:1.80-slim AS builder
+FROM rustlang/rust:nightly-slim AS builder
 
 WORKDIR /usr/src/app
 
+# Ensure rustup is available for all commands
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 # Install build dependencies
-RUN apt-get update && apt-get install -y pkg-config libssl-dev npm && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y pkg-config libssl-dev curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 RUN npm install -g wrangler
 
 # Add the WASM target
 RUN rustup target add wasm32-unknown-unknown
 
-# Copy cargo configuration files
-COPY Cargo.toml Cargo.lock ./
+# Copy project files
+COPY . .
 
-# Pre-build dependencies (WASM library)
-RUN mkdir src && touch src/lib.rs
-RUN cargo build --release --target wasm32-unknown-unknown
-RUN rm -f src/lib.rs
-
-# Copy static files and source files
-COPY static ./static
-COPY src ./src
-
-# Build the real WASM library
+# Build the project (assuming wrangler or cargo build works)
 RUN cargo build --release --target wasm32-unknown-unknown
 
-# Stage 2: Runtime image (Wrangler dev)
-FROM node:20-slim
+# Stage 2: Runtime image
+FROM rustlang/rust:nightly-slim
 
 WORKDIR /app
 
-# Install wrangler
+# Ensure rustup is available for all commands
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install npm and wrangler
+RUN apt-get update && apt-get install -y curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 RUN npm install -g wrangler
 
-# Copy the compiled WASM from the builder stage
-# wrangler-rs usually expects the WASM at a specific path or used via wrangler.toml
-COPY --from=builder /usr/src/app/target/wasm32-unknown-unknown/release/iceberg.wasm ./index.wasm
-COPY static ./static
-COPY src ./src
-COPY Cargo.toml ./
+# Add the WASM target so any on-start builds succeed
+RUN rustup target add wasm32-unknown-unknown || true
 
-# In a real worker-rs project, wrangler.toml defines how to load the WASM.
-# For a quick dockerized test, we'll need a wrangler.toml.
+# Copy only the built artifacts and static assets — avoid copying source
+# to prevent `wrangler dev` from attempting a rebuild inside the runtime image.
+COPY --from=builder /usr/src/app/target/wasm32-unknown-unknown/release/iceberg.wasm ./
+COPY --from=builder /usr/src/app/wrangler.toml ./wrangler.toml
+COPY --from=builder /usr/src/app/build ./build
+COPY --from=builder /usr/src/app/static ./static
 
-EXPOSE 8787
+# Replace the wrangler config at runtime to avoid invoking the Rust build
+# inside the runtime container. The builder already produced `iceberg.wasm` and
+# `build/index.js` which will be served.
+RUN printf 'name = "iceberg"\nmain = "build/index.js"\ncompatibility_date = "2024-04-05"\n\n[vars]\nWHITELIST = "penqguin"\n' > wrangler.toml
 
-# This is a simplified Dockerfile. Running Workers in Docker usually means
-# running 'wrangler dev --ip 0.0.0.0'.
-CMD ["wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787"]
+# Expose port 8080 to match common run commands (docker run -p 8080:8080)
+EXPOSE 8080
+
+# Use 'wrangler dev' on port 8080
+CMD ["wrangler", "dev", "--ip", "0.0.0.0", "--port", "8080"]

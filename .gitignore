@@ -4,3 +4,4 @@
 *.log
 .wrangler/
 build/
+node_modules

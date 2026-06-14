@@ -1,10 +1,11 @@
 name = "iceberg"
 main = "build/index.js"
-compatibility_date = "2026-06-14"
+compatibility_date = "2024-04-05"
+account_id = "<CF_ACCOUNT_ID>"
 
 [vars]
 WHITELIST = "penqguin"
 
-[build]
-command = "cargo build --release --target wasm32-unknown-unknown && worker-build --release"
-watch_dir = "src"
+[env.production]
+# Add production-specific settings here (route, zone_id, etc.)
+# Example: route = "example.com/*"
