@@ -39,7 +39,7 @@ jobs:
           # Deploy the prebuilt bundle and wasm; wrangler will use build/index.js
           # Capture deploy output so we can auto-detect the deployed worker URL.
           set -o pipefail
-          wrangler deploy --env production --token "$CF_API_TOKEN" 2>&1 | tee deploy_output.txt
+          wrangler deploy --env production 2>&1 | tee deploy_output.txt
           # Extract first https:// URL from the deploy output
           WORKER_URL=$(grep -oE 'https?://[^[:space:]]+' deploy_output.txt | grep -m1 'https://' || true)
           if [ -z "$WORKER_URL" ]; then
