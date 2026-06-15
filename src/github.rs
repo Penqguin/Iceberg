@@ -295,54 +295,34 @@ pub async fn get_commits_list(
     let excluded = get_excluded_repos(username);
 
     let mut all_commits = vec![];
-    let mut language_map: HashMap<String, Language> = HashMap::new();
-    let mut total_additions = 0;
-    let mut total_deletions = 0;
+    // We'll also store the languages per repo to associate them with the most recent commits
+    let mut repo_languages: HashMap<String, Vec<Language>> = HashMap::new();
 
     for repo in nodes {
         if excluded.contains(&repo.name_with_owner.as_str()) {
             continue;
         }
 
+        // Store languages for this repo
+        let mut languages = vec![];
+        if let Some(langs) = &repo.languages {
+            if let Some(edges) = &langs.edges {
+                for edge in edges {
+                    languages.push(Language {
+                        size: edge.size,
+                        name: edge.node.name.clone(),
+                        color: edge.node.color.clone(),
+                    });
+                }
+            }
+        }
+        repo_languages.insert(repo.name_with_owner.clone(), languages);
+
         let history_edges = repo
             .default_branch_ref
             .as_ref()
             .and_then(|r| r.target.as_ref())
             .and_then(|t| t.history.edges.as_ref());
-
-        let mut has_valid_commit = false;
-        if let Some(edges) = history_edges {
-            for edge in edges {
-                let matches_author = edge
-                    .node
-                    .author
-                    .as_ref()
-                    .and_then(|a| a.user.as_ref())
-                    .map(|u| u.login.eq_ignore_ascii_case(username))
-                    .unwrap_or(false);
-
-                if matches_author {
-                    has_valid_commit = true;
-                    break;
-                }
-            }
-        }
-
-        if has_valid_commit {
-            if let Some(langs) = &repo.languages {
-                if let Some(edges) = &langs.edges {
-                    for edge in edges {
-                        let name = edge.node.name.clone();
-                        let entry = language_map.entry(name.clone()).or_insert(Language {
-                            size: 0,
-                            name,
-                            color: edge.node.color.clone(),
-                        });
-                        entry.size += edge.size;
-                    }
-                }
-            }
-        }
 
         if let Some(edges) = history_edges {
             for edge in edges {
@@ -358,9 +338,6 @@ pub async fn get_commits_list(
                     continue;
                 }
 
-                total_additions += commit.additions;
-                total_deletions += commit.deletions;
-
                 all_commits.push(CommitItem {
                     repo: repo.name_with_owner.clone(),
                     additions: commit.additions,
@@ -375,7 +352,43 @@ pub async fn get_commits_list(
         }
     }
 
+    // Sort all commits globally by date (descending)
     all_commits.sort_by(|a, b| b.committed_date.cmp(&a.committed_date));
+
+    // Determine the scan depth for stats
+    let h_limit = if history_limit == 0 { 10 } else { history_limit };
+    let stats_commits = if h_limit < all_commits.len() {
+        &all_commits[..h_limit]
+    } else {
+        &all_commits
+    };
+
+    // Calculate stats and languages based ONLY on the most recent history_limit commits
+    let mut total_additions = 0;
+    let mut total_deletions = 0;
+    let mut language_map: HashMap<String, Language> = HashMap::new();
+    let mut seen_repos_for_langs = std::collections::HashSet::new();
+
+    for commit in stats_commits {
+        total_additions += commit.additions;
+        total_deletions += commit.deletions;
+
+        // If we haven't processed languages for this repo yet, add them
+        if seen_repos_for_langs.insert(&commit.repo) {
+            if let Some(langs) = repo_languages.get(&commit.repo) {
+                for lang in langs {
+                    let entry = language_map.entry(lang.name.clone()).or_insert(Language {
+                        size: 0,
+                        name: lang.name.clone(),
+                        color: lang.color.clone(),
+                    });
+                    entry.size += lang.size;
+                }
+            }
+        }
+    }
+
+    let total_commits = stats_commits.len();
 
     let mut languages: Vec<Language> = language_map.into_values().collect();
     let total_language_size: usize = languages.iter().map(|l| l.size).sum();
