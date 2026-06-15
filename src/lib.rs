@@ -102,7 +102,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await?;
 
     let headers = resp.headers_mut();
-    let cors_origin = if origin.ends_with("https://penqguin.com") {
+    let cors_origin = if origin.contains("penqguin.com") {
         origin
     } else {
         "https://penqguin.com".to_string()
@@ -128,7 +128,7 @@ async fn resolve_auth(req: &Request, env: &Env) -> std::result::Result<ResolvedA
     // Whitelist logic
     let whitelist_str = env.var("WHITELIST")
         .map(|v| v.to_string())
-        .unwrap_or_else(|_| "jasonlovesdoggo,araf821,penqguin".to_string());
+        .unwrap_or_else(|_| "penqguin".to_string());
     
     let whitelist: Vec<String> = whitelist_str
         .split(',')
