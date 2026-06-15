@@ -1,7 +1,6 @@
 name = "iceberg"
 main = "build/index.js"
 compatibility_date = "2024-04-05"
-account_id = "<CF_ACCOUNT_ID>"
 
 vars = { WHITELIST = "penqguin" }
 
