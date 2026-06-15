@@ -20,18 +20,8 @@ jobs:
       - name: Build WASM artifact
         run: |
           source $HOME/.cargo/env
-          rustup target add wasm32-unknown-unknown
-          cargo build --release --target wasm32-unknown-unknown
-
-          # install wasm-bindgen CLI and generate JS glue for bundler target
-          cargo install -f wasm-bindgen-cli
-          mkdir -p build
-          # Emit files named `index.js` / `index_bg.wasm` so wrangler's `main = "build/index.js"` matches
-          wasm-bindgen target/wasm32-unknown-unknown/release/iceberg.wasm --out-dir build --target bundler --out-name index
-          # Ensure generated glue exports reset helper expected by the bundle
-          if grep -q "function __wbg_reset_state" build/index_bg.js; then
-            sed -i.bak 's/function __wbg_reset_state\s*()/export function __wbg_reset_state()/' build/index_bg.js || true
-          fi
+          cargo install worker-build
+          worker-build --release
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,21 +31,11 @@ jobs:
       - name: Install Wrangler
         run: npm install -g wrangler
 
-      - name: Validate Cloudflare auth
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -e
-          echo "Running wrangler whoami to validate token and account..."
-          wrangler whoami || (echo "wrangler whoami failed; check CLOUDFLARE_API_TOKEN secret" >&2; exit 1)
-          echo "Authentication OK"
-
       - name: Deploy to Cloudflare Workers
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          # Deploy the prebuilt bundle and wasm; wrangler will use build/index.js
-          # Capture deploy output so we can auto-detect the deployed worker URL.
+          # Deploy using wrangler with the production environment
           set -o pipefail
           wrangler deploy --env production 2>&1 | tee deploy_output.txt
           # Extract first https:// URL from the deploy output

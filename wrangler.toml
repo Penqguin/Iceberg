@@ -1,9 +1,8 @@
 name = "iceberg"
-main = "build/index.js"
+main = "build/worker/index.js"
 compatibility_date = "2024-04-05"
 
-vars = { WHITELIST = "penqguin" }
-
 [env.production]
+vars = { WHITELIST = "penqguin" }
 # Add production-specific settings here (route, zone_id, etc.)
 # Example: route = "example.com/*"
