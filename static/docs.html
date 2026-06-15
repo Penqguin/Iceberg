@@ -221,7 +221,8 @@
                             <table class="params-table">
                                 <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
                                 <tr><td>username</td><td>string</td><td class="required">Yes</td><td>GitHub username</td></tr>
-                                <tr><td>limit</td><td>integer</td><td>No</td><td>Number of commits (default: 10)</td></tr>
+                                <tr><td>limit</td><td>integer</td><td>No</td><td>Number of commits to return (default: 10)</td></tr>
+                                <tr><td>history_limit</td><td>integer</td><td>No</td><td>Number of commits to scan per repo for stats (default: 10)</td></tr>
                             </table>
                         </div>
                     </div>
@@ -250,7 +251,7 @@
             <div class="section-content">
                 <h3>Basic Usage</h3>
                 <pre>curl "https://iceberg.penqguin.com/commits/latest?username=penqguin"
-curl "https://iceberg.penqguin.com/v2/commits/latest?username=torvalds&limit=5"</pre>
+curl "https://iceberg.penqguin.com/v2/commits/latest?username=torvalds&limit=5&history_limit=50"</pre>
 
                 <h3>With Authentication</h3>
                 <pre>curl -H "Authorization: Bearer ghp_your_token_here" \

@@ -222,6 +222,7 @@ pub async fn get_commits_list(
     username: &str,
     token: &str,
     limit: usize,
+    history_limit: usize,
 ) -> std::result::Result<CommitsListResponse, AppError> {
     let query = r#"
     query($username: String!, $firstRepos: Int!, $firstCommits: Int!, $firstLanguages: Int!) {
@@ -271,7 +272,7 @@ pub async fn get_commits_list(
     let variables = json!({
         "username": username,
         "firstRepos": 20,
-        "firstCommits": 10,
+        "firstCommits": if history_limit == 0 { 10 } else { history_limit },
         "firstLanguages": 10
     });
 

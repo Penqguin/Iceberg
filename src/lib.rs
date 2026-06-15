@@ -64,9 +64,13 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(10);
             
-            let limit = if limit == 0 { 10 } else { limit };
+            let history_limit = url.query_pairs()
+                .find(|(k, _)| k == "history_limit")
+                .map(|(_, v)| v.into_owned())
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(10);
 
-            match github::get_commits_list(&auth.username, &auth.token, limit).await {
+            match github::get_commits_list(&auth.username, &auth.token, limit, history_limit).await {
                 Ok(commits) => {
                     let mut resp = Response::from_json(&commits)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
