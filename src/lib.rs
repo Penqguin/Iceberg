@@ -12,9 +12,10 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Better panic reports in the console
     console_error_panic_hook::set_once();
 
-    let router = Router::new();
-
-    router
+    let mut resp = Router::new()
+        .options("/*path", |_, _| {
+            Response::empty()
+        })
         .get("/", |_, _| {
             Response::from_html(include_str!("../static/docs.html"))
         })
@@ -96,7 +97,15 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         })
         .run(req, env)
-        .await
+        .await?;
+
+    let headers = resp.headers_mut();
+    headers.set("Access-Control-Allow-Origin", "https://penqguin.com")?;
+    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+    headers.set("Access-Control-Max-Age", "86400")?;
+
+    Ok(resp)
 }
 
 async fn resolve_auth(req: &Request, env: &Env) -> std::result::Result<ResolvedAuth, AppError> {
