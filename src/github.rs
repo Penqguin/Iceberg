@@ -388,7 +388,7 @@ pub async fn get_commits_list(
         }
     }
 
-    let total_commits = stats_commits.len();
+    let _total_commits = stats_commits.len();
 
     let mut languages: Vec<Language> = language_map.into_values().collect();
     let total_language_size: usize = languages.iter().map(|l| l.size).sum();
