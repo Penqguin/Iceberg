@@ -53,8 +53,12 @@ jobs:
           # Deploy using wrangler with the production environment
           set -o pipefail
           wrangler deploy --env production 2>&1 | tee deploy_output.txt
-          # Extract first https:// URL from the deploy output
-          WORKER_URL=$(grep -oE 'https?://[^[:space:]]+' deploy_output.txt | grep -m1 'https://' || true)
+          # Extract the actual deployment URL from the output (usually the last URL)
+          WORKER_URL=$(grep -oE 'https?://[a-zA-Z0-0\.-]+\.workers\.dev[a-zA-Z0-9/_\.-]*' deploy_output.txt | tail -n1 || true)
+          if [ -z "$WORKER_URL" ]; then
+            # Fallback to searching for any https URL that isn't the telemetry one
+            WORKER_URL=$(grep -oE 'https?://[^[:space:]]+' deploy_output.txt | grep -v 'telemetry.md' | grep -m1 'https://' || true)
+          fi
           if [ -z "$WORKER_URL" ]; then
             echo "Unable to determine WORKER_URL from wrangler output" >&2
             cat deploy_output.txt >&2
