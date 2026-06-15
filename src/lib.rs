@@ -7,14 +7,50 @@ mod models;
 use crate::error::AppError;
 use crate::models::ResolvedAuth;
 
+#[event(scheduled)]
+pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let token = match env.var("GITHUB_TOKEN") {
+        Ok(t) => t.to_string(),
+        Err(_) => return,
+    };
+
+    let whitelist_str = env.var("WHITELIST")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "penqguin".to_string());
+    
+    let whitelist: Vec<String> = whitelist_str
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let cache = Cache::default();
+
+    for username in whitelist {
+        // We warm the most common endpoint (v2) with default limits
+        let url = format!("https://iceberg.penqguin.com/v2/commits/latest?username={}", username);
+        
+        // Check if it's already in cache to avoid wasting GitHub API quota
+        if let Ok(Some(_)) = cache.get(&url, true).await {
+            continue;
+        }
+
+        if let Ok(commits) = github::get_commits_list(&username, &token, 10, 10).await {
+            if let Ok(resp) = Response::from_json(&commits) {
+                let mut resp = resp;
+                let _ = resp.headers_mut().set("Cache-Control", "s-maxage=60");
+                let _ = cache.put(url, resp).await;
+            }
+        }
+    }
+}
+
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Better panic reports in the console
     console_error_panic_hook::set_once();
 
-    let origin = req.headers().get("Origin")?.unwrap_or_default();
-
-    let mut resp = Router::new()
+    let res = Router::new()
         .options("/*path", |_, _| {
             Response::empty()
         })
@@ -27,8 +63,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                return Ok(resp.cloned()?);
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -49,8 +85,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v2/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                return Ok(resp.cloned()?);
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -83,8 +119,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/streak", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                return Ok(resp.cloned()?);
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
+                return Ok(resp);
             }
 
             let auth = match resolve_auth(&req, &ctx.env).await {
@@ -103,7 +139,12 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         })
         .run(req, env)
-        .await?;
+        .await;
+
+    let mut resp = match res {
+        Ok(r) => r,
+        Err(e) => return Err(e),
+    };
 
     let headers = resp.headers_mut();
     headers.set("Access-Control-Allow-Origin", "*")?;

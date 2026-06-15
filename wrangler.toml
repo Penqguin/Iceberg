@@ -2,6 +2,9 @@ name = "iceberg"
 main = "build/index.js"
 compatibility_date = "2024-04-05"
 
+[triggers]
+crons = ["* * * * *"]
+
 [env.production]
 vars = { WHITELIST = "penqguin" }
 # Add production-specific settings here (route, zone_id, etc.)
