@@ -36,9 +36,14 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
         }
 
         if let Ok(commits) = github::get_commits_list(&username, &token, 10, 10).await {
-            if let Ok(resp) = Response::from_json(&commits) {
-                let mut resp = resp;
-                let _ = resp.headers_mut().set("Cache-Control", "s-maxage=60");
+            if let Ok(mut resp) = Response::from_json(&commits) {
+                let headers = resp.headers_mut();
+                let _ = headers.set("Cache-Control", "s-maxage=60");
+                let _ = headers.set("Access-Control-Allow-Origin", "*");
+                let _ = headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+                let _ = headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+                let _ = headers.set("Access-Control-Max-Age", "86400");
+                let _ = headers.set("X-Cache", "HIT");
                 let _ = cache.put(url, resp).await;
             }
         }
@@ -61,16 +66,21 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             Ok(resp)
         })
         .get("/", |_, _| {
-            Response::from_html(include_str!("../static/docs.html"))
+            let mut resp = Response::from_html(include_str!("../static/docs.html"))?;
+            let headers = resp.headers_mut();
+            headers.set("Access-Control-Allow-Origin", "*")?;
+            Ok(resp)
         })
         .get("/healthcheck", |_, _| {
-            Response::from_json(&serde_json::json!({ "status": "ok" }))
+            let mut resp = Response::from_json(&serde_json::json!({ "status": "ok" }))?;
+            let headers = resp.headers_mut();
+            headers.set("Access-Control-Allow-Origin", "*")?;
+            Ok(resp)
         })
         .get_async("/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                resp.headers_mut().set("X-Cache", "HIT")?;
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
                 return Ok(resp);
             }
 
@@ -82,8 +92,19 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             match github::get_most_recent_commit(&auth.username, &auth.token).await {
                 Ok(commit) => {
                     let mut resp = Response::from_json(&commit)?;
-                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url.to_string(), resp.cloned()?).await?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=60")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                    }
+                    
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    cache.put(url.to_string(), cache_resp).await?;
+                    
                     resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
@@ -93,8 +114,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v2/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                resp.headers_mut().set("X-Cache", "HIT")?;
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
                 return Ok(resp);
             }
 
@@ -118,8 +138,19 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             match github::get_commits_list(&auth.username, &auth.token, limit, history_limit).await {
                 Ok(commits) => {
                     let mut resp = Response::from_json(&commits)?;
-                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url.to_string(), resp.cloned()?).await?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=60")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                    }
+
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    cache.put(url.to_string(), cache_resp).await?;
+                    
                     resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
@@ -129,8 +160,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/streak", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
-                resp.headers_mut().set("X-Cache", "HIT")?;
+            if let Some(resp) = cache.get(url.to_string(), true).await? {
                 return Ok(resp);
             }
 
@@ -142,8 +172,19 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             match github::get_streak_info(&auth.username, &auth.token).await {
                 Ok(streak) => {
                     let mut resp = Response::from_json(&streak)?;
-                    resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
-                    cache.put(url.to_string(), resp.cloned()?).await?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=60")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                    }
+
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    cache.put(url.to_string(), cache_resp).await?;
+                    
                     resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
@@ -153,23 +194,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .run(req, env)
         .await;
 
-    let mut resp = match res {
-        Ok(r) => r,
-        Err(e) => {
-            let mut r = Response::error(e.to_string(), 500)?;
-            let headers = r.headers_mut();
-            headers.set("Content-Type", "application/json")?;
-            r
-        }
-    };
-
-    let headers = resp.headers_mut();
-    let _ = headers.set("Access-Control-Allow-Origin", "*");
-    let _ = headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-    let _ = headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    let _ = headers.set("Access-Control-Max-Age", "86400");
-
-    Ok(resp)
+    res
 }
 
 async fn resolve_auth(req: &Request, env: &Env) -> std::result::Result<ResolvedAuth, AppError> {

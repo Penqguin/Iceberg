@@ -24,41 +24,46 @@ impl std::error::Error for AppError {}
 
 impl AppError {
     pub fn to_response(&self) -> Result<Response> {
-        match self {
+        let (json_body, status) = match self {
             Self::Unauthorized(msg) => {
-                let json_body = if msg.contains("required") {
+                let json = if msg.contains("required") {
                     json!({
                         "error": "GitHub Personal Access Token required for non-whitelisted users",
                         "usage": "Add header: Authorization: Bearer YOUR_GITHUB_PAT",
                         "how_to_create": "GitHub Settings → Developer settings → Personal access tokens → Generate new token (no special permissions needed, just for rate limiting)"
                     })
                 } else {
-                    json!({
-                        "error": msg
-                    })
+                    json!({ "error": msg })
                 };
-                Ok(Response::from_json(&json_body)?.with_status(401))
+                (json, 401)
             }
             Self::BadRequest(msg) => {
-                let json_body = if msg.contains("username") {
+                let json = if msg.contains("username") {
                     json!({
                         "error": "username parameter is required",
                         "usage": "Add ?username=your_github_username to the URL"
                     })
                 } else {
-                    json!({
-                        "error": msg
-                    })
+                    json!({ "error": msg })
                 };
-                Ok(Response::from_json(&json_body)?.with_status(400))
+                (json, 400)
             }
             Self::GitHubError(msg) => {
-                Ok(Response::from_json(&json!({ "error": format!("GraphQL query error: {}", msg) }))?.with_status(500))
+                (json!({ "error": format!("GraphQL query error: {}", msg) }), 500)
             }
             Self::Internal(msg) => {
-                Ok(Response::from_json(&json!({ "error": msg }))?.with_status(500))
+                (json!({ "error": msg }), 500)
             }
-        }
+        };
+
+        let mut resp = Response::from_json(&json_body)?.with_status(status);
+        let headers = resp.headers_mut();
+        headers.set("Access-Control-Allow-Origin", "*")?;
+        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+        headers.set("Access-Control-Max-Age", "86400")?;
+        
+        Ok(resp)
     }
 }
 
