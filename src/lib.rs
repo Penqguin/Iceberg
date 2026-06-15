@@ -12,6 +12,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Better panic reports in the console
     console_error_panic_hook::set_once();
 
+    let origin = req.headers().get("Origin")?.unwrap_or_default();
+
     let mut resp = Router::new()
         .options("/*path", |_, _| {
             Response::empty()
@@ -100,7 +102,13 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await?;
 
     let headers = resp.headers_mut();
-    headers.set("Access-Control-Allow-Origin", "https://penqguin.com")?;
+    let cors_origin = if origin.ends_with("penqguin.com") {
+        origin
+    } else {
+        "https://penqguin.com".to_string()
+    };
+
+    headers.set("Access-Control-Allow-Origin", &cors_origin)?;
     headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
     headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
     headers.set("Access-Control-Max-Age", "86400")?;
