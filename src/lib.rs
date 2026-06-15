@@ -69,7 +69,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(url.to_string(), true).await? {
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
 
@@ -83,6 +84,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     let mut resp = Response::from_json(&commit)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
                     cache.put(url.to_string(), resp.cloned()?).await?;
+                    resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),
@@ -91,7 +93,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v2/commits/latest", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(url.to_string(), true).await? {
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
 
@@ -117,6 +120,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     let mut resp = Response::from_json(&commits)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
                     cache.put(url.to_string(), resp.cloned()?).await?;
+                    resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),
@@ -125,7 +129,8 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/streak", |req, ctx| async move {
             let cache = Cache::default();
             let url = req.url()?;
-            if let Some(resp) = cache.get(url.to_string(), true).await? {
+            if let Some(mut resp) = cache.get(url.to_string(), true).await? {
+                resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
 
@@ -139,6 +144,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     let mut resp = Response::from_json(&streak)?;
                     resp.headers_mut().set("Cache-Control", "s-maxage=60")?;
                     cache.put(url.to_string(), resp.cloned()?).await?;
+                    resp.headers_mut().set("X-Cache", "MISS")?;
                     Ok(resp)
                 }
                 Err(e) => e.to_response(),
