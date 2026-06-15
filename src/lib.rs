@@ -52,7 +52,13 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     let res = Router::new()
         .options("/*path", |_, _| {
-            Response::empty()
+            let mut resp = Response::empty()?;
+            let headers = resp.headers_mut();
+            headers.set("Access-Control-Allow-Origin", "*")?;
+            headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+            headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+            headers.set("Access-Control-Max-Age", "86400")?;
+            Ok(resp)
         })
         .get("/", |_, _| {
             Response::from_html(include_str!("../static/docs.html"))
@@ -141,12 +147,21 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .run(req, env)
         .await;
 
-    let mut resp = res?;
+    let mut resp = match res {
+        Ok(r) => r,
+        Err(e) => {
+            let mut r = Response::error(e.to_string(), 500)?;
+            let headers = r.headers_mut();
+            headers.set("Content-Type", "application/json")?;
+            r
+        }
+    };
+
     let headers = resp.headers_mut();
-    headers.set("Access-Control-Allow-Origin", "*")?;
-    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
-    headers.set("Access-Control-Max-Age", "86400")?;
+    let _ = headers.set("Access-Control-Allow-Origin", "*");
+    let _ = headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    let _ = headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    let _ = headers.set("Access-Control-Max-Age", "86400");
 
     Ok(resp)
 }
