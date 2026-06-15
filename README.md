@@ -1,15 +1,16 @@
 # Iceberg
 
-A fast, lightweight, and modern **GitHub activity tracking API** written in Rust using **Axum** and **Tokio**. This project is a complete rewrite of the original Go-based [Katib](https://github.com/JasonLovesDoggo/Katib) service. It replicates all features including GraphQL-based GitHub requests, contribution streak calculation, language distribution normalization, and endpoint caching.
+A fast, lightweight, and modern **GitHub activity tracking API** built as a **Cloudflare Worker** using **Rust** and `worker-rs`. This project is a complete rewrite of the original Go-based [Katib](https://github.com/JasonLovesDoggo/Katib) service. It replicates all features including GraphQL-based GitHub requests, contribution streak calculation, language distribution normalization, and edge-side caching.
 
 ## Features
 
-- **High Performance**: Built with Rust, Axum, and Tokio for minimal memory footprint and fast response times.
-- **Embedded Documentation**: Serves the API docs at the root URL (`/`) directly from the binary.
-- **Robust Cache Layer**: Features an in-memory cache with a 120-second TTL to respect GitHub GraphQL API rate limits.
+- **Edge Performance**: Deploys as a Cloudflare Worker for global low-latency and minimal cold starts.
+- **Embedded Documentation**: Serves the API docs at the root URL (`/`) directly from the Worker.
+- **Cloudflare Cache API**: Integrates with the native Cache API for high-performance, edge-local caching.
 - **Contribution Streak Tracking**: Calculates current and highest contribution streaks based on the user's daily activity calendar.
 - **Language Normalization**: Restructures repo language distribution sizes (redistributing dominant languages representing >80% of volume) to look cleaner and more representative on developer portfolio pages.
 - **Secure Authentication Model**: Uses a system-wide `GITHUB_TOKEN` for whitelisted users, while allowing other users to authenticate with their own Personal Access Token (PAT) via an `Authorization: Bearer <PAT>` header.
+- **Global CORS**: Configured to allow requests from any origin (`*`) while remaining secure through token-based authentication.
 
 ---
 
@@ -21,30 +22,30 @@ The following diagram illustrates how incoming requests are processed, authentic
 sequenceDiagram
     autonumber
     actor Client
-    participant Router as Axum Router
-    participant AuthMW as Auth Middleware
-    participant Cache as Cache Service
+    participant Router as worker-rs Router
+    participant Auth as Auth Handler
+    participant Cache as CF Cache API
     participant Handlers as Endpoint Handlers
     participant GitHub as GitHub GraphQL API
 
     Client->>Router: GET /streak?username=user
-    Router->>AuthMW: Intercept Request
+    Router->>Auth: Resolve Identity
     alt Username is in Whitelist
-        AuthMW->>AuthMW: Resolve System GITHUB_TOKEN
+        Auth->>Auth: Resolve System GITHUB_TOKEN
     else Username is not in Whitelist
-        AuthMW->>AuthMW: Extract Token from Authorization Header
+        Auth->>Auth: Extract Token from Authorization Header
     end
-    AuthMW->>Router: Forward with Resolved Credentials
+    Auth->>Router: Forward with Resolved Credentials
     Router->>Handlers: Forward to Streak Handler
-    Handlers->>Cache: Query Cache (key: streak:user)
+    Handlers->>Cache: Query Edge Cache
     alt Cache Hit
-        Cache-->>Handlers: Return Cached Data (JSON)
+        Cache-->>Handlers: Return Cached Data
         Handlers-->>Client: 200 OK (Cached Data)
     else Cache Miss
         Handlers->>GitHub: Execute GraphQL query with token
         GitHub-->>Handlers: Return raw GraphQL data
         Handlers->>Handlers: Calculate Current/Highest Streak & Active status
-        Handlers->>Cache: Store JSON in Cache (120s TTL)
+        Handlers->>Cache: Store JSON in Cache
         Handlers-->>Client: 200 OK (Fresh Data)
     end
 ```
@@ -74,31 +75,14 @@ sequenceDiagram
   - `username` (Required): The GitHub username to fetch stats for.
 - **Headers**:
   - `Authorization: Bearer <YOUR_PAT>` (Required only if the username is not in the system whitelist).
-- **Response Example**:
-  ```json
-  {
-    "repo": "owner/repo-name",
-    "additions": 45,
-    "deletions": 12,
-    "commitUrl": "https://github.com/owner/repo-name/commit/abc123xyz...",
-    "committedDate": "2026-06-13T12:00:00Z",
-    "oid": "abc123x",
-    "messageHeadline": "feat: add user authentication",
-    "messageBody": "Implements OAuth2 authentication handlers...",
-    "languages": [
-      { "size": 15000, "name": "Rust", "color": "#dea584" },
-      { "size": 3200, "name": "TypeScript", "color": "#3178c6" }
-    ],
-    "parentCommits": []
-  }
-  ```
 
 ### 4. Recent Commits History (v2)
 - **Endpoint**: `/v2/commits/latest`
 - **Method**: `GET`
 - **Query Parameters**:
   - `username` (Required): The GitHub username.
-  - `limit` (Optional, default `10`): Max number of commits to return.
+  - `limit` (Optional, default `10`): Max number of commits to return in the list.
+  - `history_limit` (Optional, default `10`): Number of commits to scan per repo for statistics (additions/deletions/languages).
 - **Response Example**:
   ```json
   {
@@ -130,36 +114,27 @@ sequenceDiagram
 - **Method**: `GET`
 - **Query Parameters**:
   - `username` (Required): The GitHub username.
-- **Response Example**:
-  ```json
-  {
-    "currentStreak": 14,
-    "highestStreak": 45,
-    "active": true
-  }
-  ```
 
 ---
 
 ## Configuration
 
-Environment variables can be supplied using a `.env` file in the root directory:
+Environment variables are managed via `wrangler.toml` (for production) or a `.env` file (for local development):
 
-| Variable | Description | Default |
-| :--- | :--- | :--- |
-| `PORT` | The port the application server binds to | `8080` |
-| `GITHUB_TOKEN` | System-wide Personal Access Token used for whitelisted accounts | None |
-| `WHITELIST` | Comma-separated list of lowercase usernames exempt from providing their own tokens | None |
+| Variable | Description |
+| :--- | :--- |
+| `GITHUB_TOKEN` | System-wide Personal Access Token used for whitelisted accounts |
+| `WHITELIST` | Comma-separated list of lowercase usernames exempt from providing their own tokens |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- Install **Rust** (MSRV 1.75+)
-- Obtain a **GitHub Personal Access Token (PAT)**:
-  - Settings -> Developer Settings -> Personal Access Tokens (Fine-grained or Classic).
-  - No special scopes are required for retrieving public contributions/commits.
+- Install **Rust**
+- Install **Wrangler** (`npm install -g wrangler`)
+- Install **worker-build** (`cargo install worker-build`)
+- Obtain a **GitHub Personal Access Token (PAT)**
 
 ### Running Locally
 1. Clone the repository and navigate to the project directory.
@@ -167,29 +142,29 @@ Environment variables can be supplied using a `.env` file in the root directory:
    ```bash
    cp .env.example .env
    ```
-3. Open `.env` and fill in your `GITHUB_TOKEN`.
-4. Run the development server:
+3. Open `.env` and fill in your `GITHUB_TOKEN` and `WHITELIST`.
+4. Run the development server using Wrangler:
    ```bash
-   cargo run
+   wrangler dev
    ```
-5. Test the application in your browser:
-   - Docs page: `https://iceberg.penqguin.com/`
-   - Test whitelisted user commit: `https://iceberg.penqguin.com/commits/latest?username=penqguin`
-   - Test health check: `https://iceberg.penqguin.com/healthcheck`
+5. Test the application locally (usually at `http://localhost:8787`):
+   - Docs page: `http://localhost:8787/`
+   - Test whitelisted user commit: `http://localhost:8787/commits/latest?username=penqguin`
 
 ---
 
-## Docker Deployment
+## Deployment
 
-You can build and run the application in a secure Docker container:
-
-### Build Image
+### Deploy to Cloudflare
 ```bash
-docker build -t iceberg .
+wrangler deploy --env production
 ```
 
-### Run Container
+### Docker Deployment
+The project includes a `Dockerfile` that packages the Worker and Wrangler for containerized environments (useful for CI or localized edge testing):
+
 ```bash
+docker build -t iceberg .
 docker run -p 8080:8080 --env-file .env iceberg
 ```
 
