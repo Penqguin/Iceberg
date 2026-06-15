@@ -141,16 +141,11 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .run(req, env)
         .await;
 
-    let mut resp = match res {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
-
-    let headers = resp.headers_mut();
-    headers.set("Access-Control-Allow-Origin", "*")?;
-    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
-    headers.set("Access-Control-Max-Age", "86400")?;
+    let resp = res?
+        .with_header("Access-Control-Allow-Origin", "*")?
+        .with_header("Access-Control-Allow-Methods", "GET, OPTIONS")?
+        .with_header("Access-Control-Allow-Headers", "Authorization, Content-Type")?
+        .with_header("Access-Control-Max-Age", "86400")?;
 
     Ok(resp)
 }
