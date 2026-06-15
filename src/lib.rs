@@ -102,22 +102,10 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await?;
 
     let headers = resp.headers_mut();
-
-    // Explicitly set the allowed origin to match exactly what the browser expects
-    // If the request came from penqguin.com or a subdomain, reflect that exact origin
-    let cors_origin = if origin.starts_with("https://") && origin.contains("penqguin.com") {
-        origin
-    } else {
-        "https://penqguin.com".to_string()
-    };
-
-    headers.set("Access-Control-Allow-Origin", &cors_origin)?;
+    headers.set("Access-Control-Allow-Origin", "*")?;
     headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
     headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
     headers.set("Access-Control-Max-Age", "86400")?;
-
-    // MUST set Vary: Origin when Access-Control-Allow-Origin is dynamic
-    headers.set("Vary", "Origin")?;
 
     Ok(resp)
 }
