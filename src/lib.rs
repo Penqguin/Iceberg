@@ -102,7 +102,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .await?;
 
     let headers = resp.headers_mut();
-    let cors_origin = if origin.ends_with("penqguin.com") {
+    let cors_origin = if origin.ends_with("https://penqguin.com") {
         origin
     } else {
         "https://penqguin.com".to_string()
