@@ -3,7 +3,8 @@ main = "build/index.js"
 compatibility_date = "2024-04-05"
 account_id = "<CF_ACCOUNT_ID>"
 
+vars = { WHITELIST = "penqguin" }
+
 [env.production]
 # Add production-specific settings here (route, zone_id, etc.)
 # Example: route = "example.com/*"
-vars = { WHITELIST = "penqguin" }
