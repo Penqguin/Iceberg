@@ -163,6 +163,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
                 console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
                 resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
@@ -213,6 +214,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
                 console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
                 resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
@@ -263,6 +265,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
                 console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
                 resp.headers_mut().set("X-Cache", "HIT")?;
                 return Ok(resp);
             }
