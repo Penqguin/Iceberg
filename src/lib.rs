@@ -58,7 +58,7 @@ fn parse_and_validate_query_params(url: &Url) -> std::result::Result<QueryParams
         .transpose()?
         .unwrap_or(10);
     
-    if limit == 0 || limit > 50 {
+    if limit == 0 || limit > 20 {
         return Err(AppError::ValidationError("limit".to_string(), "must be between 1 and 50".to_string()));
     }
 
@@ -67,7 +67,7 @@ fn parse_and_validate_query_params(url: &Url) -> std::result::Result<QueryParams
         .transpose()?
         .unwrap_or(5);
     
-    if history_limit == 0 || history_limit > 20 {
+    if history_limit == 0 || history_limit > 75 {
         return Err(AppError::ValidationError("history_limit".to_string(), "must be between 1 and 20".to_string()));
     }
 
