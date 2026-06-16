@@ -80,6 +80,14 @@ pub struct ResolvedAuth {
     pub token: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct QueryParams {
+    pub username: String,
+    pub limit: usize,           // Maps to firstRepos
+    pub history_limit: usize,   // Maps to firstCommits
+    pub language_limit: usize,  // Maps to firstLanguages
+}
+
 // --- GitHub API Models (Incoming JSON) ---
 
 #[derive(Serialize, Debug)]
@@ -172,9 +180,29 @@ pub struct ReposResponseData {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GqlCost {
+    pub requested_cost: u64,
+    pub actual_cost: u64,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GqlExtensions {
+    pub cost: GqlCost,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GraphQLResponse<T> {
+    pub data: Option<T>,
+    pub errors: Option<Vec<serde_json::Value>>,
+    pub extensions: Option<GqlExtensions>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct ReposGraphQLResponse {
     pub data: Option<ReposResponseData>,
     pub errors: Option<Vec<serde_json::Value>>,
+    pub extensions: Option<GqlExtensions>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -217,4 +245,5 @@ pub struct StreakResponseData {
 pub struct StreakGraphQLResponse {
     pub data: Option<StreakResponseData>,
     pub errors: Option<Vec<serde_json::Value>>,
+    pub extensions: Option<GqlExtensions>,
 }
