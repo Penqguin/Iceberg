@@ -5,4 +5,3 @@
 .wrangler/
 build/
 node_modules
-dist/

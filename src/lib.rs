@@ -1,8 +1,7 @@
+use worker::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use worker::*;
 
-mod cache;
 mod error;
 mod github;
 mod models;
@@ -10,6 +9,7 @@ mod models;
 use crate::error::AppError;
 use crate::models::{ResolvedAuth, QueryParams};
 
+static CACHE: Lazy<Cache> = Lazy::new(|| Cache::default());
 static USERNAME_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9\-]+$").unwrap());
 
 struct AppConfig {
@@ -90,42 +90,29 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
         Err(_) => return,
     };
 
-    let bucket = match env.bucket("GITHUB_CACHE") {
-        Ok(b) => b,
-        Err(_) => return,
-    };
-
-    let endpoint = "v2/commits/latest:l=10:h=5:lang=3";
-
     for username in config.whitelist {
-        let needs_refresh = match cache::get_cached::<models::CommitsListResponse>(&bucket, &username, endpoint).await {
-            Ok(Some((_, needs_refresh))) => needs_refresh,
-            _ => true,
-        };
-
-        if !needs_refresh {
+        // We warm the most common endpoint (v2) with default limits
+        let url = format!("https://iceberg.penqguin.com/v2/commits/latest?username={}", username);
+        
+        // Check if it's already in cache to avoid wasting GitHub API quota
+        if let Ok(Some(_)) = CACHE.get(&url, true).await {
             continue;
         }
 
-        console_log!("Refreshing cache for {}", username);
-        if let Ok((commits, _cost)) = github::get_commits_list(&username, &config.github_token, 10, 5).await {
-            if let Err(e) = cache::set_cached(&bucket, &username, endpoint, &commits).await {
-                console_error!("Failed to cache for {}: {}", username, e);
+        if let Ok((commits, cost)) = github::get_commits_list(&username, &config.github_token, 10, 5).await {
+            if let Ok(mut resp) = Response::from_json(&commits) {
+                let headers = resp.headers_mut();
+                let _ = headers.set("Cache-Control", "s-maxage=300");
+                let _ = headers.set("Access-Control-Allow-Origin", "*");
+                let _ = headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+                let _ = headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+                let _ = headers.set("Access-Control-Max-Age", "86400");
+                let _ = headers.set("X-Cache", "HIT");
+                let _ = headers.set("X-Query-Cost", &cost.to_string());
+                let _ = CACHE.put(url, resp).await;
             }
         }
     }
-}
-
-fn build_cached_response<T: serde::Serialize>(data: &T, cost: u64, is_hit: bool) -> Result<Response> {
-    let mut resp = Response::from_json(data)?;
-    let headers = resp.headers_mut();
-    headers.set("Access-Control-Allow-Origin", "*")?;
-    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
-    headers.set("Access-Control-Max-Age", "86400")?;
-    headers.set("X-Query-Cost", &cost.to_string())?;
-    headers.set("X-Cache", if is_hit { "HIT" } else { "MISS" })?;
-    Ok(resp)
 }
 
 #[event(fetch)]
@@ -161,30 +148,26 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Ok(c) => c,
                 Err(e) => return e.to_response(),
             };
-
+            
             let mut params = match parse_and_validate_query_params(&url) {
                 Ok(p) => p,
                 Err(e) => return e.to_response(),
             };
-
+            
             // Hardcode limits for v1 backward compatibility
             params.limit = 5;
             params.history_limit = 5;
 
-            let bucket = match ctx.env.bucket("GITHUB_CACHE") {
-                Ok(b) => b,
-                Err(e) => return Response::error(e.to_string(), 500),
-            };
+            let is_whitelisted = config.whitelist.contains(&params.username.to_lowercase());
+            let cache_key = format!("{}:wl={}", url, is_whitelisted);
 
-            let username_lower = params.username.to_lowercase();
-            let endpoint = "v1/commits/latest";
-
-            if let Some((data, _needs_refresh)) = cache::get_cached::<models::MostRecentCommit>(&bucket, &username_lower, endpoint).await? {
-                console_log!("Cache HIT: {}:{}", username_lower, endpoint);
-                return build_cached_response(&data, 0, true);
+            if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
+                console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
+                resp.headers_mut().set("X-Cache", "HIT")?;
+                return Ok(resp);
             }
-
-            console_log!("Cache MISS: {}:{}", username_lower, endpoint);
+            console_log!("Cache MISS: {}", cache_key);
 
             let auth = match resolve_auth(&req, &config, &params.username).await {
                 Ok(a) => a,
@@ -193,8 +176,23 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             match github::get_most_recent_commit(&auth.username, &auth.token).await {
                 Ok((commit, cost)) => {
-                    cache::set_cached(&bucket, &username_lower, endpoint, &commit).await?;
-                    build_cached_response(&commit, cost, false)
+                    let mut resp = Response::from_json(&commit)?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=300")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                        headers.set("X-Query-Cost", &cost.to_string())?;
+                    }
+                    
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    CACHE.put(cache_key, cache_resp).await?;
+                    
+                    resp.headers_mut().set("X-Cache", "MISS")?;
+                    Ok(resp)
                 }
                 Err(e) => e.to_response(),
             }
@@ -211,20 +209,16 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Err(e) => return e.to_response(),
             };
 
-            let bucket = match ctx.env.bucket("GITHUB_CACHE") {
-                Ok(b) => b,
-                Err(e) => return Response::error(e.to_string(), 500),
-            };
+            let is_whitelisted = config.whitelist.contains(&params.username.to_lowercase());
+            let cache_key = format!("{}:wl={}", url, is_whitelisted);
 
-            let username_lower = params.username.to_lowercase();
-            let endpoint = format!("v2/commits/latest:l={}:h={}:lang={}", params.limit, params.history_limit, params.language_limit);
-
-            if let Some((data, _needs_refresh)) = cache::get_cached::<models::CommitsListResponse>(&bucket, &username_lower, &endpoint).await? {
-                console_log!("Cache HIT: {}:{}", username_lower, endpoint);
-                return build_cached_response(&data, 0, true);
+            if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
+                console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
+                resp.headers_mut().set("X-Cache", "HIT")?;
+                return Ok(resp);
             }
-
-            console_log!("Cache MISS: {}:{}", username_lower, endpoint);
+            console_log!("Cache MISS: {}", cache_key);
 
             let auth = match resolve_auth(&req, &config, &params.username).await {
                 Ok(a) => a,
@@ -233,8 +227,23 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             match github::get_commits_list(&auth.username, &auth.token, params.limit, params.history_limit).await {
                 Ok((commits, cost)) => {
-                    cache::set_cached(&bucket, &username_lower, &endpoint, &commits).await?;
-                    build_cached_response(&commits, cost, false)
+                    let mut resp = Response::from_json(&commits)?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=300")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                        headers.set("X-Query-Cost", &cost.to_string())?;
+                    }
+
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    CACHE.put(cache_key, cache_resp).await?;
+                    
+                    resp.headers_mut().set("X-Cache", "MISS")?;
+                    Ok(resp)
                 }
                 Err(e) => e.to_response(),
             }
@@ -251,20 +260,16 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 Err(e) => return e.to_response(),
             };
 
-            let bucket = match ctx.env.bucket("GITHUB_CACHE") {
-                Ok(b) => b,
-                Err(e) => return Response::error(e.to_string(), 500),
-            };
+            let is_whitelisted = config.whitelist.contains(&params.username.to_lowercase());
+            let cache_key = format!("{}:wl={}", url, is_whitelisted);
 
-            let username_lower = params.username.to_lowercase();
-            let endpoint = "streak";
-
-            if let Some((data, _needs_refresh)) = cache::get_cached::<models::StreakInfo>(&bucket, &username_lower, endpoint).await? {
-                console_log!("Cache HIT: {}:{}", username_lower, endpoint);
-                return build_cached_response(&data, 0, true);
+            if let Some(mut resp) = CACHE.get(cache_key.clone(), true).await? {
+                console_log!("Cache HIT: {}", cache_key);
+                let mut resp = resp.cloned()?;
+                resp.headers_mut().set("X-Cache", "HIT")?;
+                return Ok(resp);
             }
-
-            console_log!("Cache MISS: {}:{}", username_lower, endpoint);
+            console_log!("Cache MISS: {}", cache_key);
 
             let auth = match resolve_auth(&req, &config, &params.username).await {
                 Ok(a) => a,
@@ -273,8 +278,23 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
             match github::get_streak_info(&auth.username, &auth.token).await {
                 Ok((streak, cost)) => {
-                    cache::set_cached(&bucket, &username_lower, endpoint, &streak).await?;
-                    build_cached_response(&streak, cost, false)
+                    let mut resp = Response::from_json(&streak)?;
+                    {
+                        let headers = resp.headers_mut();
+                        headers.set("Cache-Control", "s-maxage=300")?;
+                        headers.set("Access-Control-Allow-Origin", "*")?;
+                        headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+                        headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
+                        headers.set("Access-Control-Max-Age", "86400")?;
+                        headers.set("X-Query-Cost", &cost.to_string())?;
+                    }
+
+                    let mut cache_resp = resp.cloned()?;
+                    cache_resp.headers_mut().set("X-Cache", "HIT")?;
+                    CACHE.put(cache_key, cache_resp).await?;
+                    
+                    resp.headers_mut().set("X-Cache", "MISS")?;
+                    Ok(resp)
                 }
                 Err(e) => e.to_response(),
             }
