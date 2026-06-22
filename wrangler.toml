@@ -5,6 +5,10 @@ compatibility_date = "2024-04-05"
 [triggers]
 crons = ["* * * * *"]
 
+[[r2_buckets]]
+binding = "GITHUB_CACHE"
+bucket_name = "iceberg-github-cache"
+
 [env.production]
 vars = { WHITELIST = "penqguin" }
 # Add production-specific settings here (route, zone_id, etc.)

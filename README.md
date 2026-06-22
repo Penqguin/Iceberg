@@ -1,6 +1,6 @@
 # Iceberg
 
-A fast, lightweight, and modern **GitHub activity tracking API** built as a **Cloudflare Worker** using **Rust** and `worker-rs`. This project is a complete rewrite of the original Go-based [Katib](https://github.com/JasonLovesDoggo/Katib) service. It replicates all features including GraphQL-based GitHub requests, contribution streak calculation, language distribution normalization, and edge-side caching.
+A fast, lightweight, and modern **GitHub activity tracking API** built as a **Cloudflare Worker** using **Rust** and `worker-rs`. This project is inspired by [Katib](https://github.com/JasonLovesDoggo/Katib) service. It replicates all features including GraphQL-based GitHub requests, contribution streak calculation, language distribution normalization, and edge-side caching.
 
 ## Features
 
