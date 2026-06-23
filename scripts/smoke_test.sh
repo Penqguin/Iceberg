@@ -8,7 +8,7 @@ fi
 
 WORKER_URL="$1"
 TOKEN="$2"
-USERNAME="jasonlovesdoggo"
+USERNAME="penqguin"
 
 echo "Running smoke test against: $WORKER_URL"
 

@@ -9,11 +9,10 @@ use std::collections::{HashMap, HashSet};
 // --- Internal helpers ---
 
 pub(crate) fn get_excluded_repos(username: &str) -> Vec<&'static str> {
-    if username.eq_ignore_ascii_case("jasonlovesdoggo") {
+    if username.eq_ignore_ascii_case("penqguin") {
         vec![
-            "jasonlovesdoggo/jasonlovesdoggo",
-            "jasonlovesdoggo/notes",
-            "jasonlovesdoggo/status",
+            "penqguin/penqguin",
+            "penqguin/ONotes",
         ]
     } else {
         vec![]

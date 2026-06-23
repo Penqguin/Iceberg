@@ -300,15 +300,15 @@ fn parse_languages_empty_edges() {
 // --- get_excluded_repos ---
 
 #[test]
-fn excluded_repos_for_jason() {
-    let repos = get_excluded_repos("jasonlovesdoggo");
+fn excluded_repos_for_penqguin() {
+    let repos = get_excluded_repos("penqguin");
     assert!(!repos.is_empty());
-    assert!(repos.contains(&"jasonlovesdoggo/jasonlovesdoggo"));
+    assert!(repos.contains(&"penqguin/penqguin"));
 }
 
 #[test]
 fn excluded_repos_for_others_empty() {
-    assert!(get_excluded_repos("penqguin").is_empty());
+    assert!(get_excluded_repos("nobody").is_empty());
 }
 
 // --- flatten_contribution_days ---
