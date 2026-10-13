@@ -6,7 +6,7 @@ is merged into the integration branch `spec/review-fixes`.
 
 | Ticket | Title | Spec § | Blocked by | Status |
 |--------|-------|--------|------------|--------|
-| T1 | Cache failures degrade gracefully | §1 | — | open |
+| T1 | Cache failures degrade gracefully | §1 | — | **implemented** |
 | T2 | Timeout budget covers the retry cycle | §5 | — | **implemented** |
 | T3 | Param plumbing: language_limit, no clamp-up, suspicious-input logging | §3, §6, §9 | — | **implemented** |
 | T4 | Response integrity: remove redistribute_languages, UUID X-Request-ID | §2, §4 | — | **implemented** |

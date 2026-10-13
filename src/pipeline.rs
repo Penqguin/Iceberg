@@ -7,6 +7,16 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use worker::*;
 
+/// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
+macro_rules! log_warn {
+    ($($arg:tt)*) => {{
+        #[cfg(target_arch = "wasm32")]
+        console_warn!($($arg)*);
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!($($arg)*);
+    }};
+}
+
 static USERNAME_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9\-]+$").unwrap());
 
 const OWNER_EXCLUDED_REPOS_DEFAULT: &str = "penqguin/penqguin,penqguin/ONotes";
@@ -135,6 +145,48 @@ fn parse_bounded_limit(
 
 // --- Pipeline types ---
 
+/// Materialization of pipeline outcomes, split from the worker runtime so
+/// unit tests can drive the full request choreography without a runtime
+/// (runtime calls panic natively). The production impl builds `Response`;
+/// the `#[cfg(test)]` impl builds `TestResponse` via the lib test seam.
+pub(crate) trait PipelineOut {
+    type Out;
+    /// Success shell: X-Query-Cost + Cache-Control lifecycle headers.
+    fn success<D: serde::Serialize>(data: &D, query_cost: u64, ttl_secs: u64) -> Result<Self::Out>;
+    /// Error shell from an AppError.
+    fn error(err: &AppError) -> Result<Self::Out>;
+    /// Stamp a lifecycle header, overriding any existing value.
+    fn stamp(out: &mut Self::Out, key: &str, value: &str) -> Result<()>;
+    /// An unmodified copy (e.g. the `X-Cache: HIT` twin handed to the store).
+    fn clone_copy(out: &mut Self::Out) -> Result<Self::Out>;
+}
+
+/// Production materialization: real worker `Response`s.
+pub(crate) struct ResponseOut;
+
+impl PipelineOut for ResponseOut {
+    type Out = Response;
+
+    fn success<D: serde::Serialize>(data: &D, query_cost: u64, ttl_secs: u64) -> Result<Response> {
+        ResponseBuilder::new()
+            .with_header("X-Query-Cost", query_cost.to_string())
+            .with_header("Cache-Control", format!("s-maxage={}", ttl_secs))
+            .json(data)
+    }
+
+    fn error(err: &AppError) -> Result<Response> {
+        ResponseBuilder::from_error(err)
+    }
+
+    fn stamp(out: &mut Response, key: &str, value: &str) -> Result<()> {
+        out.headers_mut().set(key, value)
+    }
+
+    fn clone_copy(out: &mut Response) -> Result<Response> {
+        out.cloned()
+    }
+}
+
 pub struct CachePolicy {
     pub ttl_secs: u64,
 }
@@ -171,23 +223,46 @@ pub async fn run_pipeline<C, H, Fut, D>(
     handler: H,
 ) -> Result<Response>
 where
-    C: CacheStore,
+    C: CacheStore<Response>,
     H: FnOnce(RequestContext) -> Fut,
     Fut: std::future::Future<Output = std::result::Result<(D, u64), AppError>>,
     D: serde::Serialize,
 {
+    // Thin runtime adapter: everything after these reads is testable without
+    // a worker runtime.
     let url = req.url()?;
+    let auth_header = req.headers().get("Authorization")?;
 
-    // 1. Load configuration
     let config = match get_config(env) {
         Ok(c) => c,
-        Err(e) => return ResponseBuilder::from_error(&e),
+        Err(e) => return ResponseOut::error(&e),
     };
 
+    run_pipeline_steps::<ResponseOut, _, _, _, _>(url, auth_header, config, cache, endpoint, handler).await
+}
+
+/// The request choreography, independent of the worker runtime. `Out`
+/// materializes outcomes: `ResponseOut` produces real `Response`s; tests
+/// drive `TestOut` (`TestResponse`) because runtime calls panic natively.
+pub(crate) async fn run_pipeline_steps<Out, C, H, Fut, D>(
+    url: Url,
+    auth_header: Option<String>,
+    config: AppConfig,
+    cache: &C,
+    endpoint: &EndpointConfig,
+    handler: H,
+) -> Result<Out::Out>
+where
+    Out: PipelineOut,
+    C: CacheStore<Out::Out>,
+    H: FnOnce(RequestContext) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<(D, u64), AppError>>,
+    D: serde::Serialize,
+{
     // 2. Parse and validate query parameters
     let mut params = match parse_and_validate_query_params(&url) {
         Ok(p) => p,
-        Err(e) => return ResponseBuilder::from_error(&e),
+        Err(e) => return Out::error(&e),
     };
 
     // 3. Apply endpoint-fixed parameters (username-only endpoints)
@@ -198,17 +273,26 @@ where
     }
 
     // 4. Resolve authentication
-    let auth = match resolve_auth(&config, &params.username, req.headers().get("Authorization")?) {
+    let auth = match resolve_auth(&config, &params.username, auth_header) {
         Ok(a) => a,
-        Err(e) => return ResponseBuilder::from_error(&e),
+        Err(e) => return Out::error(&e),
     };
 
-    // 5. Derive cache key (owned by the cache module) and check cache
+    // 5. Derive cache key (owned by the cache module) and check cache.
+    //    The cache is an optimization only: a GET failure degrades to an
+    //    uncached request rather than failing it.
     let key = cache_key(endpoint.name, &auth.username, &params);
-    if let Some(mut cached) = cache.get(&key).await? {
-        let mut resp = cached.cloned()?;
-        resp.headers_mut().set("X-Cache", "HIT")?;
-        return Ok(resp);
+    let hit = match cache.get(&key).await {
+        Ok(Some(cached)) => Some(cached),
+        Ok(None) => None,
+        Err(e) => {
+            log_warn!("cache GET failed for {} ({}); treating as miss, proceeding uncached", key, e);
+            None
+        }
+    };
+    if let Some(mut cached) = hit {
+        Out::stamp(&mut cached, "X-Cache", "HIT")?;
+        return Ok(cached);
     }
 
     // 6. Execute domain handler
@@ -216,22 +300,22 @@ where
     let rctx = RequestContext { auth, params, rules, timeout_secs: config.request_timeout_secs };
     let (data, query_cost) = match handler(rctx).await {
         Ok(result) => result,
-        Err(e) => return ResponseBuilder::from_error(&e),
+        Err(e) => return Out::error(&e),
     };
 
     // 7. Build response
-    let mut builder = ResponseBuilder::new()
-        .with_header("X-Query-Cost", query_cost.to_string());
+    let mut resp = Out::success(&data, query_cost, endpoint.cache.ttl_secs)?;
 
-    builder = builder.with_header("Cache-Control", format!("s-maxage={}", endpoint.cache.ttl_secs));
+    // 8. Store in cache — a PUT failure is logged and the caller still gets
+    //    the (uncached) response. No error path here originates from the
+    //    cache store.
+    let mut cache_resp = Out::clone_copy(&mut resp)?;
+    Out::stamp(&mut cache_resp, "X-Cache", "HIT")?;
+    if let Err(e) = cache.put(&key, cache_resp).await {
+        log_warn!("cache PUT failed for {} ({}); serving response uncached", key, e);
+    }
 
-    let mut resp = builder.json(&data)?;
-
-    // 8. Store in cache
-    let mut cache_resp = resp.cloned()?;
-    cache_resp.headers_mut().set("X-Cache", "HIT")?;
-    cache.put(&key, cache_resp).await?;
-    resp.headers_mut().set("X-Cache", "MISS")?;
+    Out::stamp(&mut resp, "X-Cache", "MISS")?;
 
     Ok(resp)
 }
@@ -435,5 +519,114 @@ mod tests {
         assert_eq!(parse_request_timeout_secs(Some("1")), 1);
         assert_eq!(parse_request_timeout_secs(Some("20")), 20);
         assert_eq!(parse_request_timeout_secs(Some("30")), 30);
+    }
+
+    // --- Cache failure degradation (spec §1) ---
+
+    /// Test materialization: produces `TestResponse`s without a worker
+    /// runtime. Mirrors `ResponseOut` only where tests observe it (status,
+    /// headers, JSON body).
+    struct TestOut;
+
+    impl PipelineOut for TestOut {
+        type Out = crate::TestResponse;
+
+        fn success<D: serde::Serialize>(data: &D, query_cost: u64, ttl_secs: u64) -> Result<crate::TestResponse> {
+            Ok(ResponseBuilder::new()
+                .with_header("X-Query-Cost", query_cost.to_string())
+                .with_header("Cache-Control", format!("s-maxage={}", ttl_secs))
+                .into_test_response(data))
+        }
+
+        fn error(err: &AppError) -> Result<crate::TestResponse> {
+            let (status, body) = err.to_error_parts();
+            let mut builder = ResponseBuilder::new()
+                .with_status(status)
+                .with_header("X-Error-Code", err.error_code());
+            for (key, value) in err.extra_headers() {
+                builder = builder.with_header(key, value);
+            }
+            Ok(builder.into_test_response(&body))
+        }
+
+        fn stamp(out: &mut crate::TestResponse, key: &str, value: &str) -> Result<()> {
+            if let Some(slot) = out.headers.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+                slot.1 = value.to_string();
+            } else {
+                out.headers.push((key.to_string(), value.to_string()));
+            }
+            Ok(())
+        }
+
+        fn clone_copy(out: &mut crate::TestResponse) -> Result<crate::TestResponse> {
+            Ok(crate::TestResponse {
+                status: out.status,
+                headers: out.headers.clone(),
+                body: out.body.clone(),
+            })
+        }
+    }
+
+    /// Test double whose get/put both fail, standing in for a cache outage.
+    /// Counts put attempts so tests can assert the pipeline still tried to
+    /// warm the cache before treating the failure as harmless.
+    struct FailingCache {
+        puts: std::sync::atomic::AtomicU32,
+    }
+
+    impl CacheStore<crate::TestResponse> for FailingCache {
+        async fn get(&self, _key: &str) -> Result<Option<crate::TestResponse>> {
+            Err(Error::JsError("simulated cache outage".into()))
+        }
+
+        async fn put(&self, _key: &str, _response: crate::TestResponse) -> Result<()> {
+            self.puts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(Error::JsError("simulated cache outage".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn failing_cache_request_still_succeeds_with_miss() {
+        let cache = FailingCache { puts: Default::default() };
+        let endpoint = EndpointConfig {
+            name: "/v2/commits/latest",
+            cache: CachePolicy { ttl_secs: 300 },
+            fixed_params: None,
+        };
+        let cfg = AppConfig {
+            github_token: "system-token".into(),
+            whitelist: vec!["penqguin".into()],
+            excluded_repos: vec![],
+            request_timeout_secs: 15,
+        };
+
+        let out = run_pipeline_steps::<TestOut, _, _, _, _>(
+            url_with("username=penqguin&limit=20&history_limit=10"),
+            None,
+            cfg,
+            &cache,
+            &endpoint,
+            |rctx| async move {
+                let data = serde_json::json!({ "username": rctx.auth.username });
+                Ok((data, 5u64))
+            },
+        )
+        .await
+        .unwrap();
+
+        // The request succeeds end to end and reports itself as a MISS.
+        out.assert_status(200);
+        out.assert_header("X-Cache", "MISS");
+        out.assert_header("X-Query-Cost", "5");
+        out.assert_header("Cache-Control", "s-maxage=300");
+        assert_eq!(out.body_json().unwrap()["username"], "penqguin");
+
+        // The pipeline still attempted the store before degrading.
+        assert_eq!(
+            cache.puts.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "cache put should still be attempted"
+        );
     }
 }
