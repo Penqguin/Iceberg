@@ -1,22 +1,24 @@
 use crate::github::types::ContributionDay;
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{Duration, NaiveDate};
 
-pub(crate) fn calculate_current_streak(days: &[ContributionDay]) -> usize {
-    if days.is_empty() {
-        return 0;
-    }
+/// The "active recently" rule: contributed on `as_of` or the day before.
+/// One definition — `calculate_current_streak` and `is_active` both express it
+/// through this helper.
+pub(crate) fn has_recent_contribution(days: &[ContributionDay], as_of: NaiveDate) -> bool {
+    let today = as_of.format("%Y-%m-%d").to_string();
+    let yesterday = (as_of - Duration::days(1)).format("%Y-%m-%d").to_string();
 
-    let now = Utc::now();
-    let today = now.format("%Y-%m-%d").to_string();
-    let yesterday = (now - Duration::days(1)).format("%Y-%m-%d").to_string();
-
-    let has_recent = days.iter().rev().any(|d| {
+    days.iter().rev().any(|d| {
         (d.date == today || d.date == yesterday) && d.contribution_count > 0
-    });
+    })
+}
 
-    if !has_recent {
+pub(crate) fn calculate_current_streak(days: &[ContributionDay], as_of: NaiveDate) -> usize {
+    if days.is_empty() || !has_recent_contribution(days, as_of) {
         return 0;
     }
+
+    let today = as_of.format("%Y-%m-%d").to_string();
 
     let mut streak = 0;
     let mut skipped_today = false;
@@ -27,10 +29,11 @@ pub(crate) fn calculate_current_streak(days: &[ContributionDay]) -> usize {
             Err(_) => continue,
         };
 
-        if day_date > now.naive_utc().date() {
+        if day_date > as_of {
             continue;
         }
 
+        // A zero-contribution today doesn't break a streak that ends yesterday.
         if day.date == today && day.contribution_count == 0 && !skipped_today {
             skipped_today = true;
             continue;
@@ -64,12 +67,6 @@ pub(crate) fn calculate_highest_streak(days: &[ContributionDay]) -> usize {
     highest
 }
 
-pub(crate) fn is_active(days: &[ContributionDay]) -> bool {
-    let now = Utc::now();
-    let today = now.format("%Y-%m-%d").to_string();
-    let yesterday = (now - Duration::days(1)).format("%Y-%m-%d").to_string();
-
-    days.iter().rev().any(|d| {
-        (d.date == today || d.date == yesterday) && d.contribution_count > 0
-    })
+pub(crate) fn is_active(days: &[ContributionDay], as_of: NaiveDate) -> bool {
+    has_recent_contribution(days, as_of)
 }

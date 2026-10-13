@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use crate::error::{AppError, Unauthorized};
 use crate::github::types::*;
 use futures::future::{select, Either};
 use serde_json::json;
@@ -157,7 +157,7 @@ where
         if resp.status != 200 {
             let body = String::from_utf8_lossy(&resp.body).to_string();
             return match resp.status {
-                401 | 403 => Err(AppError::Unauthorized(format!("GitHub API unauthorized: {}", body))),
+                401 | 403 => Err(AppError::Unauthorized(Unauthorized::GitHubApi(format!("GitHub API unauthorized: {}", body)))),
                 400 => Err(AppError::BadRequest(format!("GitHub API bad request: {}", body))),
                 _ => Err(AppError::GitHubError(format!("GitHub API status {}: {}", resp.status, body))),
             };
