@@ -21,6 +21,17 @@ macro_rules! log_warn {
 }
 
 /// Sleep — `tokio::time::sleep` in tests, `worker::Delay` in production (wasm32).
+/// Clock seam — tokio's mock clock under test (tracks `sleep`, so paused/advanced
+/// time moves the deadline) and the wall clock in production.
+#[cfg(test)]
+fn now() -> tokio_time::Instant {
+    tokio_time::Instant::now()
+}
+#[cfg(not(test))]
+fn now() -> std::time::Instant {
+    std::time::Instant::now()
+}
+
 #[cfg(test)]
 async fn sleep(dur: std::time::Duration) {
     tokio_time::sleep(dur).await;
@@ -134,7 +145,19 @@ where
     let max_retries = 5;
     let mut retry_count = 0;
 
+    // The budget covers the entire cycle — every attempt and every backoff
+    // sleep. Once elapsed time reaches it, give up immediately instead of
+    // retrying past the caller's total wall time.
+    let deadline = now() + std::time::Duration::from_secs(timeout_secs);
+
     loop {
+        if now() >= deadline {
+            return Err(AppError::Timeout(format!(
+                "Request timeout budget of {} seconds exhausted",
+                timeout_secs
+            )));
+        }
+
         let resp = fetcher.post_json(GITHUB_GRAPHQL_URL, token, payload, timeout_secs).await?;
 
         let is_rate_limited = resp.status == 429
@@ -173,12 +196,22 @@ where
 #[cfg(test)]
 pub struct FakeHttpFetch {
     responses: std::cell::RefCell<std::collections::VecDeque<std::result::Result<HttpResponse, AppError>>>,
+    last_timeout_secs: std::cell::Cell<Option<u64>>,
 }
 
 #[cfg(test)]
 impl FakeHttpFetch {
     pub fn new() -> Self {
-        Self { responses: std::cell::RefCell::new(std::collections::VecDeque::new()) }
+        Self {
+            responses: std::cell::RefCell::new(std::collections::VecDeque::new()),
+            last_timeout_secs: std::cell::Cell::new(None),
+        }
+    }
+
+    /// The `timeout_secs` value the last fetch was given — used to assert the
+    /// config → fetcher plumbing.
+    pub fn last_timeout_secs(&self) -> Option<u64> {
+        self.last_timeout_secs.get()
     }
 
     pub fn push_ok(&self, status: u16, body: &str) {
@@ -213,7 +246,8 @@ impl FakeHttpFetch {
 
 #[cfg(test)]
 impl HttpFetch for FakeHttpFetch {
-    async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, _timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
+    async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
+        self.last_timeout_secs.set(Some(timeout_secs));
         self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
             Err(AppError::Internal("No more fake responses".to_string()))
         })

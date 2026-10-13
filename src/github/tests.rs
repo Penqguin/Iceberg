@@ -1,4 +1,7 @@
-use super::client::FakeHttpFetch;
+use std::collections::HashMap;
+
+use super::client::{execute_graphql, FakeHttpFetch, HttpResponse};
+use super::client::HttpFetch;
 use super::streak::{calculate_current_streak, calculate_highest_streak, is_active};
 use super::types::*;
 use crate::error::AppError;
@@ -388,7 +391,7 @@ async fn get_commits_list_empty_repos() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[]).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -397,7 +400,7 @@ async fn get_commits_list_graphql_error() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":null,"errors":[{"message":"Not Found"}]}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[]).await;
+    let result = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::GitHubError(msg) => assert!(msg.contains("Not Found")),
@@ -411,7 +414,7 @@ async fn get_commits_list_rate_limited_then_ok() {
     fake.push_rate_limited();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[]).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -420,7 +423,7 @@ async fn get_commits_list_unauthorized() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(401, r#"{"message":"Bad credentials"}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "bad_token", 10, 5, &[]).await;
+    let result = super::get_commits_list(&fake, "testuser", "bad_token", 10, 5, &[], 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::Unauthorized(crate::error::Unauthorized::GitHubApi(msg)) => assert!(msg.contains("Bad credentials")),
@@ -437,7 +440,7 @@ async fn get_commits_list_exclusions_flow_through() {
     ]}}}}"#);
 
     let excluded = vec!["me/private".to_string()];
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &excluded).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &excluded, 15).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(resp.stats.total_commits, 0);
 }
@@ -447,8 +450,64 @@ async fn get_streak_info_empty_calendar() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"contributionsCollection":{"contributionCalendar":{"weeks":[]}}}}}"#);
 
-    let (info, _) = super::get_streak_info(&fake, "testuser", "token").await.unwrap();
+    let (info, _) = super::get_streak_info(&fake, "testuser", "token", 15).await.unwrap();
     assert_eq!(info.current_streak, 0);
     assert_eq!(info.highest_streak, 0);
     assert!(!info.active);
+}
+
+// --- Timeout budget over the retry cycle (spec §5) ---
+
+/// A fetcher that rate-limits every attempt, forever.
+struct AlwaysRateLimited;
+
+impl HttpFetch for AlwaysRateLimited {
+    async fn post_json(
+        &self,
+        _url: &str,
+        _token: &str,
+        _body: &serde_json::Value,
+        _timeout_secs: u64,
+    ) -> std::result::Result<HttpResponse, AppError> {
+        Ok(HttpResponse {
+            status: 429,
+            headers: HashMap::new(),
+            body: Vec::new(),
+        })
+    }
+}
+
+/// With paused tokio time, `tokio::time::sleep` (the test `sleep` seam) advances
+/// the virtual clock instantly, so backoff (1+2+4+8s) elapses without wall time.
+#[tokio::test(start_paused = true)]
+async fn always_rate_limited_exhausts_deadline_returns_timeout() {
+    let result: std::result::Result<(serde_json::Value, u64), AppError> =
+        execute_graphql(&AlwaysRateLimited, "token", "query { x }", serde_json::json!({}), Some(3)).await;
+
+    match result.unwrap_err() {
+        AppError::Timeout(msg) => assert!(msg.contains("budget"), "unexpected message: {}", msg),
+        other => panic!("expected Timeout, got {:?}", other),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn rate_limited_twice_then_success_within_budget_succeeds() {
+    let fake = FakeHttpFetch::new();
+    fake.push_rate_limited();
+    fake.push_rate_limited();
+    fake.push_ok(200, r#"{"data":{"ok":true}}"#);
+
+    let (data, _cost): (serde_json::Value, u64) =
+        execute_graphql(&fake, "token", "query { x }", serde_json::json!({}), Some(10)).await.unwrap();
+    assert_eq!(data["ok"], serde_json::json!(true));
+}
+
+#[tokio::test]
+async fn timeout_plumbed_through_to_fetcher() {
+    let fake = FakeHttpFetch::new();
+    fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
+
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 21).await.unwrap();
+    assert!(resp.commits.is_empty());
+    assert_eq!(fake.last_timeout_secs(), Some(21));
 }

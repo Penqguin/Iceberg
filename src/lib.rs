@@ -100,6 +100,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             let fetcher = github::RealHttpFetch;
             if let Ok((commits, cost)) = github::get_commits_list(
                 &fetcher, username, &token, params.limit, params.history_limit, &excluded,
+                config.request_timeout_secs,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
                     .with_header("Cache-Control", "s-maxage=300")
@@ -154,6 +155,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     rctx.params.limit,
                     rctx.params.history_limit,
                     &rctx.rules.excluded_repos,
+                    rctx.timeout_secs,
                 ).await
             }).await
         })
@@ -173,6 +175,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     rctx.params.limit,
                     rctx.params.history_limit,
                     &rctx.rules.excluded_repos,
+                    rctx.timeout_secs,
                 ).await
             }).await
         })
@@ -189,6 +192,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     &fetcher,
                     &rctx.auth.username,
                     &rctx.auth.token,
+                    rctx.timeout_secs,
                 ).await?;
                 Ok((data, cost))
             }).await

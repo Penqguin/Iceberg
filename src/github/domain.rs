@@ -9,6 +9,8 @@ use serde_json::json;
 
 // --- Commits (GitHub adapter: query + parse; shaping happens in crate::shaping) ---
 
+/// `timeout_secs` is the whole-cycle budget passed to `execute_graphql` (see
+/// `execute_with_retries` for how the deadline is enforced).
 pub async fn get_commits_list<F: HttpFetch>(
     fetcher: &F,
     username: &str,
@@ -16,6 +18,7 @@ pub async fn get_commits_list<F: HttpFetch>(
     limit: usize,
     history_limit: usize,
     excluded_repos: &[String],
+    timeout_secs: u64,
 ) -> std::result::Result<(crate::models::CommitsListResponse, u64), AppError> {
     let query = r#"
     query($username: String!, $firstRepos: Int!, $firstCommits: Int!, $firstLanguages: Int!) {
@@ -63,7 +66,7 @@ pub async fn get_commits_list<F: HttpFetch>(
     });
 
     let (data, total_cost): (ReposResponseData, u64) =
-        execute_graphql(fetcher, token, query, variables, None).await?;
+        execute_graphql(fetcher, token, query, variables, Some(timeout_secs)).await?;
 
     let repos: Vec<RepositoryNode> = data
         .user
@@ -80,6 +83,7 @@ pub async fn get_streak_info<F: HttpFetch>(
     fetcher: &F,
     username: &str,
     token: &str,
+    timeout_secs: u64,
 ) -> std::result::Result<(StreakInfo, u64), AppError> {
     let query = r#"
     query($username: String!) {
@@ -99,7 +103,7 @@ pub async fn get_streak_info<F: HttpFetch>(
     "#;
 
     let (data, cost): (StreakUserData, u64) =
-        execute_graphql(fetcher, token, query, json!({ "username": username }), None).await?;
+        execute_graphql(fetcher, token, query, json!({ "username": username }), Some(timeout_secs)).await?;
 
     let days = flatten_contribution_days(&data.user.contributions_collection.contribution_calendar);
     let as_of = Utc::now().naive_utc().date();
