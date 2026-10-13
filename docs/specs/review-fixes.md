@@ -50,9 +50,9 @@ outage must never turn a working endpoint into a 500.
 languages when one is >80% dominant. Nothing in any spec asked for altering returned
 data; it makes `/v2/commits/latest` report language sizes GitHub never returned.
 
-- [ ] Delete `redistribute_languages` and its call site.
-- [ ] Delete/adjust tests that assert on redistributed sizes.
-- [ ] `languages` in the response reflect raw GitHub roll-up only.
+- [x] Delete `redistribute_languages` and its call site.
+- [x] Delete/adjust tests that assert on redistributed sizes.
+- [x] `languages` in the response reflect raw GitHub roll-up only.
 
 ### 3. Stop silently clamping repo count up
 **Where**: `src/github/domain.rs` line 60.
@@ -71,8 +71,8 @@ defeating the quota-reduction goal and breaking the v1 contract (v1 fixes `limit
 `format!("req-{}", worker::js_sys::Math::random())` is neither unique, unpredictable,
 nor UUID-shaped. `Math::random()` can also repeat within a warm isolate.
 
-- [ ] Use the `uuid` crate (`v4` feature) to generate a real UUID per response.
-- [ ] Same value shared across all headers of one response (single generation point in
+- [x] Use the `uuid` crate (`v4` feature) to generate a real UUID per response.
+- [x] Same value shared across all headers of one response (single generation point in
       `ResponseBuilder`).
 
 ### 5. Timeout budget must cover the whole retry cycle
