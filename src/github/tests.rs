@@ -5,7 +5,7 @@ use super::client::HttpFetch;
 use super::streak::{calculate_current_streak, calculate_highest_streak, is_active};
 use super::types::*;
 use crate::error::AppError;
-use crate::shaping::{matches_author, parse_languages, redistribute_languages, ShapingRules};
+use crate::shaping::{matches_author, parse_languages, ShapingRules};
 use chrono::{Duration, NaiveDate, Utc};
 
 fn today() -> String {
@@ -205,37 +205,6 @@ fn active_empty() {
     assert!(!is_active(&[], as_of()));
 }
 
-// --- redistribute_languages ---
-
-#[test]
-fn redistribute_single_lang_unchanged() {
-    let mut langs = vec![crate::models::Language { size: 100, name: "Rust".into(), color: None }];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 100);
-}
-
-#[test]
-fn redistribute_below_threshold_unchanged() {
-    let mut langs = vec![
-        crate::models::Language { size: 70, name: "Rust".into(), color: None },
-        crate::models::Language { size: 30, name: "JS".into(), color: None },
-    ];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 70);
-    assert_eq!(langs[1].size, 30);
-}
-
-#[test]
-fn redistribute_dominant_language_two_only() {
-    let mut langs = vec![
-        crate::models::Language { size: 90, name: "Rust".into(), color: None },
-        crate::models::Language { size: 10, name: "JS".into(), color: None },
-    ];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 54);
-    assert_eq!(langs[1].size, 46);
-}
-
 // --- matches_author ---
 
 #[test]
@@ -384,6 +353,41 @@ fn flatten_days_multiple_weeks() {
     assert_eq!(days[1].date, "2024-01-08");
 }
 
+// --- GraphQL variable plumbing (spec §3, §6): requested limits are used exactly ---
+
+#[tokio::test]
+async fn get_commits_list_uses_requested_limits_exactly() {
+    let fake = FakeHttpFetch::new();
+    fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
+
+    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 5, 5, 3, &[], 15).await.unwrap();
+    let variables = &fake.last_request_body()["variables"];
+    assert_eq!(variables["firstRepos"], 5, "limit=5 must fetch exactly 5 repos — no clamp-up");
+    assert_eq!(variables["firstCommits"], 5);
+    assert_eq!(variables["firstLanguages"], 3);
+}
+
+#[tokio::test]
+async fn get_commits_list_plumbs_language_limit() {
+    let fake = FakeHttpFetch::new();
+    fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
+
+    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 7, &[], 15).await.unwrap();
+    let variables = &fake.last_request_body()["variables"];
+    assert_eq!(variables["firstRepos"], 10);
+    assert_eq!(variables["firstCommits"], 5);
+    assert_eq!(variables["firstLanguages"], 7);
+}
+
+#[tokio::test]
+async fn get_commits_list_caps_repos_at_50_for_safety() {
+    let fake = FakeHttpFetch::new();
+    fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
+
+    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 60, 5, 3, &[], 15).await.unwrap();
+    assert_eq!(fake.last_request_body()["variables"]["firstRepos"], 50);
+}
+
 // --- HttpFetch seam integration tests ---
 
 #[tokio::test]
@@ -391,7 +395,7 @@ async fn get_commits_list_empty_repos() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[], 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -400,7 +404,7 @@ async fn get_commits_list_graphql_error() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":null,"errors":[{"message":"Not Found"}]}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await;
+    let result = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[], 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::GitHubError(msg) => assert!(msg.contains("Not Found")),
@@ -414,7 +418,7 @@ async fn get_commits_list_rate_limited_then_ok() {
     fake.push_rate_limited();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 15).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[], 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -423,7 +427,7 @@ async fn get_commits_list_unauthorized() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(401, r#"{"message":"Bad credentials"}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "bad_token", 10, 5, &[], 15).await;
+    let result = super::get_commits_list(&fake, "testuser", "bad_token", 10, 5, 3, &[], 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::Unauthorized(crate::error::Unauthorized::GitHubApi(msg)) => assert!(msg.contains("Bad credentials")),
@@ -440,7 +444,7 @@ async fn get_commits_list_exclusions_flow_through() {
     ]}}}}"#);
 
     let excluded = vec!["me/private".to_string()];
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &excluded, 15).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &excluded, 15).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(resp.stats.total_commits, 0);
 }
@@ -507,7 +511,7 @@ async fn timeout_plumbed_through_to_fetcher() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, &[], 21).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[], 21).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(fake.last_timeout_secs(), Some(21));
 }

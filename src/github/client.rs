@@ -197,6 +197,7 @@ where
 pub struct FakeHttpFetch {
     responses: std::cell::RefCell<std::collections::VecDeque<std::result::Result<HttpResponse, AppError>>>,
     last_timeout_secs: std::cell::Cell<Option<u64>>,
+    requests: std::cell::RefCell<Vec<serde_json::Value>>,
 }
 
 #[cfg(test)]
@@ -205,6 +206,7 @@ impl FakeHttpFetch {
         Self {
             responses: std::cell::RefCell::new(std::collections::VecDeque::new()),
             last_timeout_secs: std::cell::Cell::new(None),
+            requests: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -212,6 +214,12 @@ impl FakeHttpFetch {
     /// config → fetcher plumbing.
     pub fn last_timeout_secs(&self) -> Option<u64> {
         self.last_timeout_secs.get()
+    }
+
+    /// The body of the last request the fake received (the full GraphQL
+    /// payload: `{ query, variables }`), for asserting on query variables.
+    pub fn last_request_body(&self) -> serde_json::Value {
+        self.requests.borrow().last().cloned().expect("no requests recorded")
     }
 
     pub fn push_ok(&self, status: u16, body: &str) {
@@ -248,6 +256,7 @@ impl FakeHttpFetch {
 impl HttpFetch for FakeHttpFetch {
     async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
         self.last_timeout_secs.set(Some(timeout_secs));
+        self.requests.borrow_mut().push(_body.clone());
         self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
             Err(AppError::Internal("No more fake responses".to_string()))
         })

@@ -57,4 +57,5 @@ pub struct QueryParams {
     pub username: String,
     pub limit: usize,
     pub history_limit: usize,
+    pub language_limit: usize,
 }

@@ -51,43 +51,6 @@ pub(crate) fn matches_author(commit: &GqlCommit, username: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// When one language dominates (>80% of the total), shave 40% off it and
-/// spread it across the remaining languages — a presentation-shaping rule,
-/// applied here so endpoints never have to know about it.
-pub(crate) fn redistribute_languages(languages: &mut Vec<Language>) {
-    if languages.len() <= 1 {
-        return;
-    }
-    let total: usize = languages.iter().map(|l| l.size).sum();
-    if total == 0 {
-        return;
-    }
-    let dominant_pct = languages[0].size as f64 / total as f64;
-    if dominant_pct <= 0.8 {
-        return;
-    }
-
-    let redistributed = (languages[0].size as f64 * 0.4) as usize;
-    languages[0].size -= redistributed;
-
-    let second_bonus = redistributed / 2;
-    languages[1].size += second_bonus;
-
-    let remaining = redistributed - second_bonus;
-    if languages.len() > 2 && remaining > 0 {
-        let per_lang = remaining / (languages.len() - 2);
-        let extra = remaining % (languages.len() - 2);
-        for (i, lang) in languages.iter_mut().enumerate().skip(2) {
-            lang.size += per_lang;
-            if (i - 2) < extra {
-                lang.size += 1;
-            }
-        }
-    } else {
-        languages[1].size += remaining;
-    }
-}
-
 /// Shape raw repository nodes into the served profile: filter exclusions,
 /// collect the author's commits, roll up languages, compute stats over the
 /// history window, trim to `limit`.
@@ -171,7 +134,6 @@ pub(crate) fn shape_commits(
 
     let mut languages: Vec<Language> = lang_map.into_values().collect();
     languages.sort_by(|a, b| b.size.cmp(&a.size));
-    redistribute_languages(&mut languages);
 
     let total_commits = all_commits.len();
     let final_limit = if limit > 0 { limit } else { 10 };
@@ -278,6 +240,26 @@ mod tests {
         assert_eq!(out.languages.len(), 2);
         assert_eq!(out.languages[0].name, "Rust");
         assert_eq!(out.languages[0].size, 80);
+    }
+
+    #[test]
+    fn languages_are_raw_rollup_no_redistribution() {
+        let rules = ShapingRules::none();
+        // Rust is dominant (>80% of the total); its size must be the raw
+        // GitHub roll-up, untouched by any presentation-shaping rule.
+        let repos = vec![
+            repo("me/a", vec![("Rust", 90), ("JS", 10)], vec![
+                commit("me", "2024-01-01", 1),
+            ]),
+            repo("me/b", vec![("Rust", 90)], vec![
+                commit("me", "2024-01-02", 1),
+            ]),
+        ];
+        let out = shape_commits(repos, "me", 10, 5, &rules);
+        let rust = out.languages.iter().find(|l| l.name == "Rust").unwrap();
+        let js = out.languages.iter().find(|l| l.name == "JS").unwrap();
+        assert_eq!(rust.size, 180); // 90 + 90, exactly as GitHub reported
+        assert_eq!(js.size, 10);
     }
 
     #[test]
