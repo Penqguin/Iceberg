@@ -173,12 +173,22 @@ where
 #[cfg(test)]
 pub struct FakeHttpFetch {
     responses: std::cell::RefCell<std::collections::VecDeque<std::result::Result<HttpResponse, AppError>>>,
+    requests: std::cell::RefCell<Vec<serde_json::Value>>,
 }
 
 #[cfg(test)]
 impl FakeHttpFetch {
     pub fn new() -> Self {
-        Self { responses: std::cell::RefCell::new(std::collections::VecDeque::new()) }
+        Self {
+            responses: std::cell::RefCell::new(std::collections::VecDeque::new()),
+            requests: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The body of the last request the fake received (the full GraphQL
+    /// payload: `{ query, variables }`), for asserting on query variables.
+    pub fn last_request_body(&self) -> serde_json::Value {
+        self.requests.borrow().last().cloned().expect("no requests recorded")
     }
 
     pub fn push_ok(&self, status: u16, body: &str) {
@@ -214,6 +224,7 @@ impl FakeHttpFetch {
 #[cfg(test)]
 impl HttpFetch for FakeHttpFetch {
     async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, _timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
+        self.requests.borrow_mut().push(_body.clone());
         self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
             Err(AppError::Internal("No more fake responses".to_string()))
         })

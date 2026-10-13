@@ -50,9 +50,9 @@ outage must never turn a working endpoint into a 500.
 languages when one is >80% dominant. Nothing in any spec asked for altering returned
 data; it makes `/v2/commits/latest` report language sizes GitHub never returned.
 
-- [ ] Delete `redistribute_languages` and its call site.
-- [ ] Delete/adjust tests that assert on redistributed sizes.
-- [ ] `languages` in the response reflect raw GitHub roll-up only.
+- [x] Delete `redistribute_languages` and its call site.
+- [x] Delete/adjust tests that assert on redistributed sizes.
+- [x] `languages` in the response reflect raw GitHub roll-up only.
 
 ### 3. Stop silently clamping repo count up
 **Where**: `src/github/domain.rs` line 60.
@@ -60,9 +60,9 @@ data; it makes `/v2/commits/latest` report language sizes GitHub never returned.
 `"firstRepos": limit.max(10).min(50)` — a user passing `limit=5` still fetches 10 repos,
 defeating the quota-reduction goal and breaking the v1 contract (v1 fixes `limit=5`).
 
-- [ ] `firstRepos` = the validated `limit` exactly (no `.max(10)`), capped at 50 for
+- [x] `firstRepos` = the validated `limit` exactly (no `.max(10)`), capped at 50 for
       safety: `limit.min(50)`.
-- [ ] Update `src/github/tests.rs` to assert the GraphQL variables match the requested
+- [x] Update `src/github/tests.rs` to assert the GraphQL variables match the requested
       limits exactly.
 
 ### 4. `X-Request-ID` must be a UUID
@@ -71,8 +71,8 @@ defeating the quota-reduction goal and breaking the v1 contract (v1 fixes `limit
 `format!("req-{}", worker::js_sys::Math::random())` is neither unique, unpredictable,
 nor UUID-shaped. `Math::random()` can also repeat within a warm isolate.
 
-- [ ] Use the `uuid` crate (`v4` feature) to generate a real UUID per response.
-- [ ] Same value shared across all headers of one response (single generation point in
+- [x] Use the `uuid` crate (`v4` feature) to generate a real UUID per response.
+- [x] Same value shared across all headers of one response (single generation point in
       `ResponseBuilder`).
 
 ### 5. Timeout budget must cover the whole retry cycle
@@ -95,12 +95,12 @@ backoff (waits 1+2+4+8 = 15s plus per-attempt fetch time), total wall time is un
 
 `firstLanguages` is hardcoded to 3 and unreachable by callers.
 
-- [ ] Add `language_limit: usize` to `QueryParams` (default 3, max 10, reject 0 or >10
+- [x] Add `language_limit: usize` to `QueryParams` (default 3, max 10, reject 0 or >10
       with the same `ValidationError` shape).
-- [ ] Plumb through `EndpointConfig.fixed_params` (v1: fixed at 3), the pipeline,
+- [x] Plumb through `EndpointConfig.fixed_params` (v1: fixed at 3), the pipeline,
       `get_commits_list`, and the GraphQL variables.
-- [ ] Include it in `cache_key()` so differently-scoped requests don't collide.
-- [ ] Document in `static/docs.html` parameter table.
+- [x] Include it in `cache_key()` so differently-scoped requests don't collide.
+- [x] Document in `static/docs.html` parameter table.
 
 ---
 
@@ -134,7 +134,7 @@ can point the client at the mock server.
 ### 9. Suspicious-input logging
 **Where**: `src/pipeline.rs` `parse_and_validate_query_params`.
 
-- [ ] Log (warn-level) when validation rejects input: field name, reason, and the raw
+- [x] Log (warn-level) when validation rejects input: field name, reason, and the raw
       value's length for long usernames (> 39 chars, GitHub's login cap). Never log the
       Authorization header.
 
@@ -143,18 +143,22 @@ can point the client at the mock server.
 
 The two `get_async` closures are byte-identical apart from `fixed_params`.
 
-- [ ] Extract one handler fn taking `&EndpointConfig`; both routes call it.
+- [x] Extract one handler fn taking `&EndpointConfig`; both routes call it.
 
 ### 11. Document the actual API contract
-- [ ] `static/docs.html`: state the enforced bounds (limit 1–20, history_limit 1–75,
+- [x] `static/docs.html`: state the enforced bounds (limit 1–20, history_limit 1–75,
       language_limit 1–10) and that v1 returns the same `CommitsListResponse` shape as
       v2 with fixed `limit=5, history_limit=5, language_limit=3`.
-- [ ] `GLOSSARY.md`: remove any entry describing removed shaping behaviour.
+- [x] `GLOSSARY.md`: remove any entry describing removed shaping behaviour.
 
 ### 12. Bundle the GitHub context data clump (optional refactor)
 `(..., username, token, ...)` travels through every `github::` fn signature. A small
 `GitHubCtx<'a> { username, token }` (fetcher stays a separate generic param) would
 shrink every signature. Judgement call — do it opportunistically, not as its own PR.
+
+- [x] Done in T6: `GitHubCtx<'a>` lives in `src/github/domain.rs`, re-exported via
+      `github::`. All call sites (3 route handlers, cron warmer, github tests)
+      updated; `client.rs` (`execute_graphql`) untouched.
 
 ---
 

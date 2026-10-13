@@ -9,12 +9,20 @@ use serde_json::json;
 
 // --- Commits (GitHub adapter: query + parse; shaping happens in crate::shaping) ---
 
+/// Per-request GitHub credentials: the bundle of profile-context data that
+/// every domain fetcher needs. One struct instead of a `(username, token)`
+/// data clump in every signature; the HTTP fetcher stays a separate generic.
+pub struct GitHubCtx<'a> {
+    pub username: &'a str,
+    pub token: &'a str,
+}
+
 pub async fn get_commits_list<F: HttpFetch>(
     fetcher: &F,
-    username: &str,
-    token: &str,
+    gh: GitHubCtx<'_>,
     limit: usize,
     history_limit: usize,
+    language_limit: usize,
     excluded_repos: &[String],
 ) -> std::result::Result<(crate::models::CommitsListResponse, u64), AppError> {
     let query = r#"
@@ -56,14 +64,16 @@ pub async fn get_commits_list<F: HttpFetch>(
     "#;
 
     let variables = json!({
-        "username": username,
-        "firstRepos": limit.max(10).min(50),
+        "username": gh.username,
+        // The validated limit is used exactly (capped at 50 for safety) —
+        // never clamped up, which would defeat the quota-reduction goal.
+        "firstRepos": limit.min(50),
         "firstCommits": history_limit.max(1),
-        "firstLanguages": 3,
+        "firstLanguages": language_limit,
     });
 
     let (data, total_cost): (ReposResponseData, u64) =
-        execute_graphql(fetcher, token, query, variables, None).await?;
+        execute_graphql(fetcher, gh.token, query, variables, None).await?;
 
     let repos: Vec<RepositoryNode> = data
         .user
@@ -71,15 +81,14 @@ pub async fn get_commits_list<F: HttpFetch>(
         .unwrap_or_default();
 
     let rules = ShapingRules::new(excluded_repos.to_vec());
-    Ok((shape_commits(repos, username, limit, history_limit, &rules), total_cost))
+    Ok((shape_commits(repos, gh.username, limit, history_limit, &rules), total_cost))
 }
 
 // --- Streak ---
 
 pub async fn get_streak_info<F: HttpFetch>(
     fetcher: &F,
-    username: &str,
-    token: &str,
+    gh: GitHubCtx<'_>,
 ) -> std::result::Result<(StreakInfo, u64), AppError> {
     let query = r#"
     query($username: String!) {
@@ -99,7 +108,7 @@ pub async fn get_streak_info<F: HttpFetch>(
     "#;
 
     let (data, cost): (StreakUserData, u64) =
-        execute_graphql(fetcher, token, query, json!({ "username": username }), None).await?;
+        execute_graphql(fetcher, gh.token, query, json!({ "username": gh.username }), None).await?;
 
     let days = flatten_contribution_days(&data.user.contributions_collection.contribution_calendar);
     let as_of = Utc::now().naive_utc().date();

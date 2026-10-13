@@ -3,6 +3,7 @@ use worker::*;
 mod cache;
 mod error;
 mod github;
+mod logging;
 mod models;
 mod pipeline;
 mod shaping;
@@ -13,6 +14,13 @@ use crate::models::QueryParams;
 use crate::pipeline::{get_config, run_pipeline, CachePolicy, EndpointConfig};
 
 // --- Response / CORS seam ---
+
+/// Single generation point for the response's `X-Request-ID`: a real UUID v4.
+/// Each response path calls this exactly once, so all headers of one response
+/// share the value and every response gets a fresh one.
+pub(crate) fn new_request_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
 
 pub struct ResponseBuilder {
     status: u16,
@@ -42,7 +50,7 @@ impl ResponseBuilder {
         headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
         headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type")?;
         headers.set("Access-Control-Max-Age", "86400")?;
-        headers.set("X-Request-ID", &format!("req-{}", worker::js_sys::Math::random()))?;
+        headers.set("X-Request-ID", &new_request_id())?;
         Ok(())
     }
 
@@ -71,6 +79,34 @@ impl ResponseBuilder {
     }
 }
 
+// --- Commits endpoint (shared by v1 and v2) ---
+
+/// The two commits routes (`/commits/latest` and `/v2/commits/latest`) are one
+/// pipeline behind different `EndpointConfig`s: v1 pins `fixed_params`, v2
+/// takes full query parameters. Everything else — cache, auth, shaping,
+/// response headers — is identical, so both routes call this once.
+async fn commits_endpoint(
+    req: Request,
+    ctx: RouteContext<()>,
+    endpoint: EndpointConfig,
+) -> Result<Response> {
+    run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
+        let fetcher = github::RealHttpFetch;
+        let gh = github::GitHubCtx {
+            username: &rctx.auth.username,
+            token: &rctx.auth.token,
+        };
+        github::get_commits_list(
+            &fetcher,
+            gh,
+            rctx.params.limit,
+            rctx.params.history_limit,
+            rctx.params.language_limit,
+            &rctx.rules.excluded_repos,
+        ).await
+    }).await
+}
+
 // --- Scheduled cache warming ---
 
 /// Warm the default v2 query for every whitelisted profile. Keys are derived
@@ -90,6 +126,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             username: username.clone(),
             limit: 10,
             history_limit: 10,
+            language_limit: 3,
         };
         let key = cache_key("/v2/commits/latest", username, &params);
         async move {
@@ -98,8 +135,9 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             }
 
             let fetcher = github::RealHttpFetch;
+            let gh = github::GitHubCtx { username: username.as_str(), token: &token };
             if let Ok((commits, cost)) = github::get_commits_list(
-                &fetcher, username, &token, params.limit, params.history_limit, &excluded,
+                &fetcher, gh, params.limit, params.history_limit, params.language_limit, &excluded,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
                     .with_header("Cache-Control", "s-maxage=300")
@@ -140,40 +178,18 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         })
         // v1 commits — username-only adapter with fixed limits, routes through get_commits_list
         .get_async("/commits/latest", |req, ctx| async move {
-            let endpoint = EndpointConfig {
+            commits_endpoint(req, ctx, EndpointConfig {
                 name: "/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
-                fixed_params: Some((5, 5)),
-            };
-            run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
-                let fetcher = github::RealHttpFetch;
-                github::get_commits_list(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                    rctx.params.limit,
-                    rctx.params.history_limit,
-                    &rctx.rules.excluded_repos,
-                ).await
+                fixed_params: Some((5, 5, 3)),
             }).await
         })
         // v2 commits — full param support
         .get_async("/v2/commits/latest", |req, ctx| async move {
-            let endpoint = EndpointConfig {
+            commits_endpoint(req, ctx, EndpointConfig {
                 name: "/v2/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
                 fixed_params: None,
-            };
-            run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
-                let fetcher = github::RealHttpFetch;
-                github::get_commits_list(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                    rctx.params.limit,
-                    rctx.params.history_limit,
-                    &rctx.rules.excluded_repos,
-                ).await
             }).await
         })
         // Streak
@@ -185,11 +201,11 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
             run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
                 let fetcher = github::RealHttpFetch;
-                let (data, cost) = github::get_streak_info(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                ).await?;
+                let gh = github::GitHubCtx {
+                    username: &rctx.auth.username,
+                    token: &rctx.auth.token,
+                };
+                let (data, cost) = github::get_streak_info(&fetcher, gh).await?;
                 Ok((data, cost))
             }).await
         })
@@ -239,6 +255,7 @@ impl ResponseBuilder {
             ("Access-Control-Allow-Methods".into(), "GET, OPTIONS".into()),
             ("Access-Control-Allow-Headers".into(), "Authorization, Content-Type".into()),
             ("Access-Control-Max-Age".into(), "86400".into()),
+            ("X-Request-ID".into(), new_request_id()),
         ];
         headers.extend(self.extra_headers);
         TestResponse {
@@ -253,6 +270,29 @@ impl ResponseBuilder {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_request_id_is_a_uuid() {
+        let data = json!({ "status": "ok" });
+        let tr = ResponseBuilder::new().into_test_response(&data);
+        let rid = tr.header_value("X-Request-ID").expect("X-Request-ID header set");
+        assert!(uuid::Uuid::parse_str(rid).is_ok(), "X-Request-ID is not a UUID: {}", rid);
+        // Unpredictable: first 8 hex chars must be nonzero (v4 has fixed
+        // version/variant bits, but a random prefix of a real v4 never is).
+        assert!(rid.split('-').next().map_or(false, |p| p.chars().any(|c| c != '0')));
+    }
+
+    #[test]
+    fn test_request_id_fresh_per_response() {
+        let data = json!({ "status": "ok" });
+        let a = ResponseBuilder::new().into_test_response(&data);
+        let b = ResponseBuilder::new().into_test_response(&data);
+        assert_ne!(
+            a.header_value("X-Request-ID"),
+            b.header_value("X-Request-ID"),
+            "each response must get a fresh request id"
+        );
+    }
 
     #[test]
     fn test_response_builder_success() {
