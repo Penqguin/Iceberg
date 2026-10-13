@@ -60,9 +60,9 @@ data; it makes `/v2/commits/latest` report language sizes GitHub never returned.
 `"firstRepos": limit.max(10).min(50)` — a user passing `limit=5` still fetches 10 repos,
 defeating the quota-reduction goal and breaking the v1 contract (v1 fixes `limit=5`).
 
-- [ ] `firstRepos` = the validated `limit` exactly (no `.max(10)`), capped at 50 for
+- [x] `firstRepos` = the validated `limit` exactly (no `.max(10)`), capped at 50 for
       safety: `limit.min(50)`.
-- [ ] Update `src/github/tests.rs` to assert the GraphQL variables match the requested
+- [x] Update `src/github/tests.rs` to assert the GraphQL variables match the requested
       limits exactly.
 
 ### 4. `X-Request-ID` must be a UUID
@@ -95,12 +95,12 @@ backoff (waits 1+2+4+8 = 15s plus per-attempt fetch time), total wall time is un
 
 `firstLanguages` is hardcoded to 3 and unreachable by callers.
 
-- [ ] Add `language_limit: usize` to `QueryParams` (default 3, max 10, reject 0 or >10
+- [x] Add `language_limit: usize` to `QueryParams` (default 3, max 10, reject 0 or >10
       with the same `ValidationError` shape).
-- [ ] Plumb through `EndpointConfig.fixed_params` (v1: fixed at 3), the pipeline,
+- [x] Plumb through `EndpointConfig.fixed_params` (v1: fixed at 3), the pipeline,
       `get_commits_list`, and the GraphQL variables.
-- [ ] Include it in `cache_key()` so differently-scoped requests don't collide.
-- [ ] Document in `static/docs.html` parameter table.
+- [x] Include it in `cache_key()` so differently-scoped requests don't collide.
+- [x] Document in `static/docs.html` parameter table.
 
 ---
 
@@ -134,7 +134,7 @@ can point the client at the mock server.
 ### 9. Suspicious-input logging
 **Where**: `src/pipeline.rs` `parse_and_validate_query_params`.
 
-- [ ] Log (warn-level) when validation rejects input: field name, reason, and the raw
+- [x] Log (warn-level) when validation rejects input: field name, reason, and the raw
       value's length for long usernames (> 39 chars, GitHub's login cap). Never log the
       Authorization header.
 

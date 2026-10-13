@@ -15,6 +15,7 @@ pub async fn get_commits_list<F: HttpFetch>(
     token: &str,
     limit: usize,
     history_limit: usize,
+    language_limit: usize,
     excluded_repos: &[String],
 ) -> std::result::Result<(crate::models::CommitsListResponse, u64), AppError> {
     let query = r#"
@@ -57,9 +58,11 @@ pub async fn get_commits_list<F: HttpFetch>(
 
     let variables = json!({
         "username": username,
-        "firstRepos": limit.max(10).min(50),
+        // The validated limit is used exactly (capped at 50 for safety) —
+        // never clamped up, which would defeat the quota-reduction goal.
+        "firstRepos": limit.min(50),
         "firstCommits": history_limit.max(1),
-        "firstLanguages": 3,
+        "firstLanguages": language_limit,
     });
 
     let (data, total_cost): (ReposResponseData, u64) =
