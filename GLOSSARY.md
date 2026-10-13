@@ -6,7 +6,7 @@ Domain and architecture vocabulary for iceberg. Use these terms in code, docs, a
 
 **Profile** — a GitHub user's public activity as served by this API: recent commits, language roll-up, and streak, shaped by [shaping rules](#shaping-rules) before it leaves the edge.
 
-**Shaping rule** — a product decision applied to raw GitHub data: excluding curated repos, redistributing a dominant language's share, and choosing which commits feed the stats window. All shaping lives in `src/shaping.rs` — nowhere else.
+**Shaping rule** — a product decision applied to raw GitHub data: excluding curated repos and choosing which commits feed the stats window. Language totals are a raw roll-up — never re-shaped or redistributed. All shaping lives in `src/shaping.rs` — nowhere else.
 
 **Exclusion list** — the repos hidden from an owner profile's response (default: `penqguin/penqguin`, `penqguin/ONotes`; env `EXCLUDED_REPOS`). Applies only to whitelisted (owner) users. Standing assumption: the whitelist is composed of the owner's own accounts — if it ever grows to include someone else, exclusions must be pinned to explicit owner usernames (e.g. a `WHITELIST_OWNERS` env) instead of whitelist membership.
 
@@ -18,7 +18,7 @@ Domain and architecture vocabulary for iceberg. Use these terms in code, docs, a
 
 ## Architecture
 
-**Request cache** — the edge cache keyed by `(endpoint, username, limit, history_limit)`. Key derivation lives in `src/cache.rs` (`cache_key`) and must never be duplicated elsewhere — the pipeline and the cron warmer both derive keys through it. Storage swaps at the `CacheStore` seam (`WorkersCache` adapter today; R2 adapter previously attempted and reverted, so the seam is real).
+**Request cache** — the edge cache keyed by `(endpoint, username, limit, history_limit, language_limit)`. Key derivation lives in `src/cache.rs` (`cache_key`) and must never be duplicated elsewhere — the pipeline and the cron warmer both derive keys through it. Storage swaps at the `CacheStore` seam (`WorkersCache` adapter today; R2 adapter previously attempted and reverted, so the seam is real).
 
 **Request pipeline** — the per-request choreography in `src/pipeline.rs` (`run_pipeline`): config → params → cache → auth → handler → response → cache-store. Owns the `X-Cache` and `Cache-Control` headers.
 

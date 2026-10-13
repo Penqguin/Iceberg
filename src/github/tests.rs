@@ -352,12 +352,16 @@ fn flatten_days_multiple_weeks() {
 
 // --- GraphQL variable plumbing (spec §3, §6): requested limits are used exactly ---
 
+fn gh(username: &str) -> super::GitHubCtx<'_> {
+    super::GitHubCtx { username, token: "token" }
+}
+
 #[tokio::test]
 async fn get_commits_list_uses_requested_limits_exactly() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 5, 5, 3, &[]).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 5, 5, 3, &[]).await.unwrap();
     let variables = &fake.last_request_body()["variables"];
     assert_eq!(variables["firstRepos"], 5, "limit=5 must fetch exactly 5 repos — no clamp-up");
     assert_eq!(variables["firstCommits"], 5);
@@ -369,7 +373,7 @@ async fn get_commits_list_plumbs_language_limit() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 7, &[]).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 7, &[]).await.unwrap();
     let variables = &fake.last_request_body()["variables"];
     assert_eq!(variables["firstRepos"], 10);
     assert_eq!(variables["firstCommits"], 5);
@@ -381,7 +385,7 @@ async fn get_commits_list_caps_repos_at_50_for_safety() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 60, 5, 3, &[]).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 60, 5, 3, &[]).await.unwrap();
     assert_eq!(fake.last_request_body()["variables"]["firstRepos"], 50);
 }
 
@@ -392,7 +396,7 @@ async fn get_commits_list_empty_repos() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[]).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[]).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -401,7 +405,7 @@ async fn get_commits_list_graphql_error() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":null,"errors":[{"message":"Not Found"}]}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[]).await;
+    let result = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[]).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::GitHubError(msg) => assert!(msg.contains("Not Found")),
@@ -415,7 +419,7 @@ async fn get_commits_list_rate_limited_then_ok() {
     fake.push_rate_limited();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &[]).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[]).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -424,7 +428,7 @@ async fn get_commits_list_unauthorized() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(401, r#"{"message":"Bad credentials"}"#);
 
-    let result = super::get_commits_list(&fake, "testuser", "bad_token", 10, 5, 3, &[]).await;
+    let result = super::get_commits_list(&fake, super::GitHubCtx { username: "testuser", token: "bad_token" }, 10, 5, 3, &[]).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::Unauthorized(crate::error::Unauthorized::GitHubApi(msg)) => assert!(msg.contains("Bad credentials")),
@@ -441,7 +445,7 @@ async fn get_commits_list_exclusions_flow_through() {
     ]}}}}"#);
 
     let excluded = vec!["me/private".to_string()];
-    let (resp, _cost) = super::get_commits_list(&fake, "testuser", "token", 10, 5, 3, &excluded).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &excluded).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(resp.stats.total_commits, 0);
 }
@@ -451,7 +455,7 @@ async fn get_streak_info_empty_calendar() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"contributionsCollection":{"contributionCalendar":{"weeks":[]}}}}}"#);
 
-    let (info, _) = super::get_streak_info(&fake, "testuser", "token").await.unwrap();
+    let (info, _) = super::get_streak_info(&fake, gh("testuser")).await.unwrap();
     assert_eq!(info.current_streak, 0);
     assert_eq!(info.highest_streak, 0);
     assert!(!info.active);
