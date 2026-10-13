@@ -3,6 +3,7 @@ use worker::*;
 mod cache;
 mod error;
 mod github;
+mod logging;
 mod models;
 mod pipeline;
 mod shaping;
@@ -97,6 +98,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             username: username.clone(),
             limit: 10,
             history_limit: 10,
+            language_limit: 3,
         };
         let key = cache_key("/v2/commits/latest", username, &params);
         async move {
@@ -106,7 +108,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
 
             let fetcher = github::RealHttpFetch;
             if let Ok((commits, cost)) = github::get_commits_list(
-                &fetcher, username, &token, params.limit, params.history_limit, &excluded,
+                &fetcher, username, &token, params.limit, params.history_limit, params.language_limit, &excluded,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
                     .with_header("Cache-Control", "s-maxage=300")
@@ -150,7 +152,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let endpoint = EndpointConfig {
                 name: "/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
-                fixed_params: Some((5, 5)),
+                fixed_params: Some((5, 5, 3)),
             };
             run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
                 let fetcher = github::RealHttpFetch;
@@ -160,6 +162,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     &rctx.auth.token,
                     rctx.params.limit,
                     rctx.params.history_limit,
+                    rctx.params.language_limit,
                     &rctx.rules.excluded_repos,
                 ).await
             }).await
@@ -179,6 +182,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     &rctx.auth.token,
                     rctx.params.limit,
                     rctx.params.history_limit,
+                    rctx.params.language_limit,
                     &rctx.rules.excluded_repos,
                 ).await
             }).await

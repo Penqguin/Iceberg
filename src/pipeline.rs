@@ -62,31 +62,57 @@ pub fn parse_and_validate_query_params(url: &Url) -> std::result::Result<QueryPa
     let username = query.get("username")
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty())
-        .ok_or_else(|| AppError::ValidationError("username".to_string(), "is required".to_string()))?;
+        .ok_or_else(|| rejected_input("username", "is required", None))?;
 
     if !USERNAME_REGEX.is_match(&username) {
-        return Err(AppError::ValidationError("username".to_string(), "contains invalid characters".to_string()));
+        return Err(rejected_input("username", "contains invalid characters", Some(&username)));
     }
 
-    let limit = query.get("limit")
-        .map(|v| v.parse::<usize>().map_err(|_| AppError::ValidationError("limit".to_string(), "must be a number".to_string())))
-        .transpose()?
-        .unwrap_or(10);
+    let limit = parse_bounded_limit(&query, "limit", 10, 20)?;
+    let history_limit = parse_bounded_limit(&query, "history_limit", 10, 75)?;
+    let language_limit = parse_bounded_limit(&query, "language_limit", 3, 10)?;
 
-    if limit == 0 || limit > 20 {
-        return Err(AppError::ValidationError("limit".to_string(), "must be between 1 and 20".to_string()));
+    Ok(QueryParams { username, limit, history_limit, language_limit })
+}
+
+/// GitHub caps logins at 39 characters. Longer rejected usernames are logged
+/// by length only, never by value.
+const MAX_GITHUB_LOGIN_LEN: usize = 39;
+
+/// Record a rejected query parameter and return its ValidationError. Logs the
+/// field name and reason; for over-long usernames only the raw value's length
+/// (never the value, and never any Authorization data).
+fn rejected_input(field: &str, reason: &str, raw: Option<&str>) -> AppError {
+    match (field, raw) {
+        ("username", Some(value)) if value.len() > MAX_GITHUB_LOGIN_LEN => {
+            crate::log_warn!("Rejected query param: field=username reason={} (username length {} — value withheld)", reason, value.len());
+        }
+        _ => {
+            crate::log_warn!("Rejected query param: field={} reason={}", field, reason);
+        }
     }
+    AppError::ValidationError(field.to_string(), reason.to_string())
+}
 
-    let history_limit = query.get("history_limit")
-        .map(|v| v.parse::<usize>().map_err(|_| AppError::ValidationError("history_limit".to_string(), "must be a number".to_string())))
-        .transpose()?
-        .unwrap_or(10);
-
-    if history_limit == 0 || history_limit > 75 {
-        return Err(AppError::ValidationError("history_limit".to_string(), "must be between 1 and 75".to_string()));
+/// Shared parse-validate shape for the limit-style parameters (`limit`,
+/// `history_limit`, `language_limit`): optional, must be a number, must be
+/// in 1..=max. Absent means `default`.
+fn parse_bounded_limit(
+    query: &std::collections::HashMap<String, String>,
+    field: &str,
+    default: usize,
+    max: usize,
+) -> std::result::Result<usize, AppError> {
+    match query.get(field) {
+        None => Ok(default),
+        Some(raw) => match raw.parse::<usize>() {
+            Err(_) => Err(rejected_input(field, "must be a number", None)),
+            Ok(n) if n == 0 || n > max => {
+                Err(rejected_input(field, &format!("must be between 1 and {}", max), None))
+            }
+            Ok(n) => Ok(n),
+        },
     }
-
-    Ok(QueryParams { username, limit, history_limit })
 }
 
 // --- Pipeline types ---
@@ -97,12 +123,12 @@ pub struct CachePolicy {
 
 /// Endpoint configuration. `fixed_params` is for username-only endpoints
 /// (v1) whose limits don't respond to query parameters; `None` means full
-/// parameter support (v2).
+/// parameter support (v2). Tuple order: `(limit, history_limit, language_limit)`.
 pub struct EndpointConfig {
     /// Cache-key namespace, e.g. "/v2/commits/latest".
     pub name: &'static str,
     pub cache: CachePolicy,
-    pub fixed_params: Option<(usize, usize)>,
+    pub fixed_params: Option<(usize, usize, usize)>,
 }
 
 pub struct RequestContext {
@@ -145,9 +171,10 @@ where
     };
 
     // 3. Apply endpoint-fixed parameters (username-only endpoints)
-    if let Some((limit, history_limit)) = endpoint.fixed_params {
+    if let Some((limit, history_limit, language_limit)) = endpoint.fixed_params {
         params.limit = limit;
         params.history_limit = history_limit;
+        params.language_limit = language_limit;
     }
 
     // 4. Resolve authentication
@@ -231,10 +258,11 @@ mod tests {
 
     #[test]
     fn parse_valid_params() {
-        let params = parse_and_validate_query_params(&url_with("username=test-user&limit=20&history_limit=10")).unwrap();
+        let params = parse_and_validate_query_params(&url_with("username=test-user&limit=20&history_limit=10&language_limit=5")).unwrap();
         assert_eq!(params.username, "test-user");
         assert_eq!(params.limit, 20);
         assert_eq!(params.history_limit, 10);
+        assert_eq!(params.language_limit, 5);
     }
 
     #[test]
@@ -242,6 +270,20 @@ mod tests {
         let params = parse_and_validate_query_params(&url_with("username=test")).unwrap();
         assert_eq!(params.limit, 10);
         assert_eq!(params.history_limit, 10);
+        assert_eq!(params.language_limit, 3);
+    }
+
+    #[test]
+    fn parse_language_limit_out_of_bounds_rejected() {
+        assert!(parse_and_validate_query_params(&url_with("username=test&language_limit=0")).is_err());
+        assert!(parse_and_validate_query_params(&url_with("username=test&language_limit=11")).is_err());
+        let ok = parse_and_validate_query_params(&url_with("username=test&language_limit=10")).unwrap();
+        assert_eq!(ok.language_limit, 10);
+    }
+
+    #[test]
+    fn parse_language_limit_non_numeric_rejected() {
+        assert!(parse_and_validate_query_params(&url_with("username=test&language_limit=abc")).is_err());
     }
 
     #[test]
@@ -267,14 +309,16 @@ mod tests {
         let endpoint = EndpointConfig {
             name: "/commits/latest",
             cache: CachePolicy { ttl_secs: 300 },
-            fixed_params: Some((5, 5)),
+            fixed_params: Some((5, 5, 3)),
         };
-        if let Some((limit, history_limit)) = endpoint.fixed_params {
+        if let Some((limit, history_limit, language_limit)) = endpoint.fixed_params {
             params.limit = limit;
             params.history_limit = history_limit;
+            params.language_limit = language_limit;
         }
         assert_eq!(params.limit, 5);
         assert_eq!(params.history_limit, 5);
+        assert_eq!(params.language_limit, 3);
     }
 
     #[test]
