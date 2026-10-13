@@ -2,7 +2,7 @@ use super::client::FakeHttpFetch;
 use super::streak::{calculate_current_streak, calculate_highest_streak, is_active};
 use super::types::*;
 use crate::error::AppError;
-use crate::shaping::{matches_author, parse_languages, redistribute_languages, ShapingRules};
+use crate::shaping::{matches_author, parse_languages, ShapingRules};
 use chrono::{Duration, NaiveDate, Utc};
 
 fn today() -> String {
@@ -200,37 +200,6 @@ fn not_active() {
 #[test]
 fn active_empty() {
     assert!(!is_active(&[], as_of()));
-}
-
-// --- redistribute_languages ---
-
-#[test]
-fn redistribute_single_lang_unchanged() {
-    let mut langs = vec![crate::models::Language { size: 100, name: "Rust".into(), color: None }];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 100);
-}
-
-#[test]
-fn redistribute_below_threshold_unchanged() {
-    let mut langs = vec![
-        crate::models::Language { size: 70, name: "Rust".into(), color: None },
-        crate::models::Language { size: 30, name: "JS".into(), color: None },
-    ];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 70);
-    assert_eq!(langs[1].size, 30);
-}
-
-#[test]
-fn redistribute_dominant_language_two_only() {
-    let mut langs = vec![
-        crate::models::Language { size: 90, name: "Rust".into(), color: None },
-        crate::models::Language { size: 10, name: "JS".into(), color: None },
-    ];
-    redistribute_languages(&mut langs);
-    assert_eq!(langs[0].size, 54);
-    assert_eq!(langs[1].size, 46);
 }
 
 // --- matches_author ---
