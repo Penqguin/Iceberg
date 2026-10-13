@@ -81,13 +81,13 @@ nor UUID-shaped. `Math::random()` can also repeat within a warm isolate.
 The 15s timeout wraps only a single fetch attempt. With 5 retries and exponential
 backoff (waits 1+2+4+8 = 15s plus per-attempt fetch time), total wall time is unbounded.
 
-- [ ] Add `REQUEST_TIMEOUT_SECS` env var (default 15, max 30) read in `get_config` and
+- [x] Add `REQUEST_TIMEOUT_SECS` env var (default 15, max 30) read in `get_config` and
       threaded to `execute_graphql` (the `timeout_secs: Option<u64>` param already
       exists — use it).
-- [ ] Enforce a **deadline** over the whole retry loop: once
+- [x] Enforce a **deadline** over the whole retry loop: once
       (attempt timeout + backoff elapsed) exceeds the budget, return
       `AppError::Timeout` immediately — no further attempts.
-- [ ] Unit test: a fetcher that always rate-limits exhausts the deadline and returns
+- [x] Unit test: a fetcher that always rate-limits exhausts the deadline and returns
       `Timeout`, not a retry that never ends.
 
 ### 6. `language_limit` query parameter

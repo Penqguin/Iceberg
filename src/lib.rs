@@ -103,6 +103,7 @@ async fn commits_endpoint(
             rctx.params.history_limit,
             rctx.params.language_limit,
             &rctx.rules.excluded_repos,
+            rctx.timeout_secs,
         ).await
     }).await
 }
@@ -138,6 +139,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             let gh = github::GitHubCtx { username: username.as_str(), token: &token };
             if let Ok((commits, cost)) = github::get_commits_list(
                 &fetcher, gh, params.limit, params.history_limit, params.language_limit, &excluded,
+                config.request_timeout_secs,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
                     .with_header("Cache-Control", "s-maxage=300")
@@ -205,7 +207,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                     username: &rctx.auth.username,
                     token: &rctx.auth.token,
                 };
-                let (data, cost) = github::get_streak_info(&fetcher, gh).await?;
+                let (data, cost) = github::get_streak_info(&fetcher, gh, rctx.timeout_secs).await?;
                 Ok((data, cost))
             }).await
         })

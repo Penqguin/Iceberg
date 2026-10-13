@@ -11,11 +11,16 @@ static USERNAME_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9\-]+$"
 
 const OWNER_EXCLUDED_REPOS_DEFAULT: &str = "penqguin/penqguin,penqguin/ONotes";
 
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 15;
+pub const MAX_REQUEST_TIMEOUT_SECS: u64 = 30;
+
 pub struct AppConfig {
     pub github_token: String,
     pub whitelist: Vec<String>,
     /// Repos hidden from the profile of any whitelisted (owner) user.
     pub excluded_repos: Vec<String>,
+    /// Whole-request timeout budget in seconds (see §5 of the review-fixes spec).
+    pub request_timeout_secs: u64,
 }
 
 impl AppConfig {
@@ -27,6 +32,15 @@ impl AppConfig {
         } else {
             ShapingRules::none()
         }
+    }
+}
+
+/// `REQUEST_TIMEOUT_SECS`: default 15, max 30 — clamp rather than reject.
+/// Unset, unparseable, zero, or negative all fall back to the default.
+pub fn parse_request_timeout_secs(raw: Option<&str>) -> u64 {
+    match raw.map(|s| s.trim().parse::<i64>()) {
+        Some(Ok(secs)) if secs > 0 => secs.min(MAX_REQUEST_TIMEOUT_SECS as i64) as u64,
+        _ => DEFAULT_REQUEST_TIMEOUT_SECS,
     }
 }
 
@@ -53,7 +67,11 @@ pub fn get_config(env: &Env) -> std::result::Result<AppConfig, AppError> {
         .filter(|s| !s.is_empty())
         .collect();
 
-    Ok(AppConfig { github_token, whitelist, excluded_repos })
+    let request_timeout_secs = parse_request_timeout_secs(
+        env.var("REQUEST_TIMEOUT_SECS").ok().map(|v| v.to_string()).as_deref(),
+    );
+
+    Ok(AppConfig { github_token, whitelist, excluded_repos, request_timeout_secs })
 }
 
 pub fn parse_and_validate_query_params(url: &Url) -> std::result::Result<QueryParams, AppError> {
@@ -135,6 +153,8 @@ pub struct RequestContext {
     pub auth: ResolvedAuth,
     pub params: QueryParams,
     pub rules: ShapingRules,
+    /// Whole-request timeout budget passed through to the GitHub layer.
+    pub timeout_secs: u64,
 }
 
 /// Core pipeline: config → params → cache-check → auth → handler → response → cache-store.
@@ -193,7 +213,7 @@ where
 
     // 6. Execute domain handler
     let rules = config.rules_for(&auth.username);
-    let rctx = RequestContext { auth, params, rules };
+    let rctx = RequestContext { auth, params, rules, timeout_secs: config.request_timeout_secs };
     let (data, query_cost) = match handler(rctx).await {
         Ok(result) => result,
         Err(e) => return ResponseBuilder::from_error(&e),
@@ -338,6 +358,7 @@ mod tests {
             github_token: "system-token".into(),
             whitelist: vec!["penqguin".into()],
             excluded_repos: vec!["penqguin/penqguin".into(), "penqguin/ONotes".into()],
+            request_timeout_secs: 15,
         }
     }
 
@@ -382,5 +403,37 @@ mod tests {
     fn rules_for_owner_carries_exclusions() {
         assert_eq!(config().rules_for("penqguin").excluded_repos.len(), 2);
         assert!(config().rules_for("stranger").excluded_repos.is_empty());
+    }
+
+    // --- REQUEST_TIMEOUT_SECS clamping (spec §5) ---
+
+    #[test]
+    fn timeout_unset_uses_default() {
+        assert_eq!(parse_request_timeout_secs(None), 15);
+    }
+
+    #[test]
+    fn timeout_unparseable_uses_default() {
+        assert_eq!(parse_request_timeout_secs(Some("abc")), 15);
+        assert_eq!(parse_request_timeout_secs(Some("")), 15);
+    }
+
+    #[test]
+    fn timeout_zero_or_negative_uses_default() {
+        assert_eq!(parse_request_timeout_secs(Some("0")), 15);
+        assert_eq!(parse_request_timeout_secs(Some("-2")), 15);
+    }
+
+    #[test]
+    fn timeout_above_max_clamped_to_thirty() {
+        assert_eq!(parse_request_timeout_secs(Some("45")), 30);
+        assert_eq!(parse_request_timeout_secs(Some("300")), 30);
+    }
+
+    #[test]
+    fn timeout_in_bounds_kept() {
+        assert_eq!(parse_request_timeout_secs(Some("1")), 1);
+        assert_eq!(parse_request_timeout_secs(Some("20")), 20);
+        assert_eq!(parse_request_timeout_secs(Some("30")), 30);
     }
 }
