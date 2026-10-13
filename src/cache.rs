@@ -17,9 +17,12 @@ pub fn cache_key(endpoint: &str, username: &str, params: &QueryParams) -> String
 
 /// Storage at the request-cache seam. The key is derived by the caller via
 /// [`cache_key`]; what the adapter does with it is implementation detail.
-pub trait CacheStore {
-    async fn get(&self, key: &str) -> Result<Option<Response>>;
-    async fn put(&self, key: &str, response: Response) -> Result<()>;
+/// `Resp` is the response value the store moves — `Response` in production
+/// (the default), or a test materialization in unit tests, so the pipeline
+/// core can run without a worker runtime.
+pub trait CacheStore<Resp = Response> {
+    async fn get(&self, key: &str) -> Result<Option<Resp>>;
+    async fn put(&self, key: &str, response: Resp) -> Result<()>;
 }
 
 /// Adapter over the Workers Cache API.

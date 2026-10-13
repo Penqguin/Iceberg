@@ -37,10 +37,10 @@ Currently `cache.get(&key).await?` (line 161) and `cache.put(...).await?` (line 
 propagate failures and fail the whole request. The cache is an optimization; a cache
 outage must never turn a working endpoint into a 500.
 
-- [ ] On cache GET failure: log a warning, treat as a miss, proceed uncached.
-- [ ] On cache PUT failure: log a warning, still return the response to the caller.
-- [ ] No error path in `run_pipeline` may originate from the cache store.
-- [ ] Unit test: a `FailingCache: CacheStore` whose `get`/`put` both return `Err` —
+- [x] On cache GET failure: log a warning, treat as a miss, proceed uncached.
+- [x] On cache PUT failure: log a warning, still return the response to the caller.
+- [x] No error path in `run_pipeline` may originate from the cache store.
+- [x] Unit test: a `FailingCache: CacheStore` whose `get`/`put` both return `Err` —
       request must still succeed with `X-Cache: MISS`.
 
 ### 2. Remove `redistribute_languages()` (response data falsification)
