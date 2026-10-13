@@ -143,18 +143,22 @@ can point the client at the mock server.
 
 The two `get_async` closures are byte-identical apart from `fixed_params`.
 
-- [ ] Extract one handler fn taking `&EndpointConfig`; both routes call it.
+- [x] Extract one handler fn taking `&EndpointConfig`; both routes call it.
 
 ### 11. Document the actual API contract
-- [ ] `static/docs.html`: state the enforced bounds (limit 1–20, history_limit 1–75,
+- [x] `static/docs.html`: state the enforced bounds (limit 1–20, history_limit 1–75,
       language_limit 1–10) and that v1 returns the same `CommitsListResponse` shape as
       v2 with fixed `limit=5, history_limit=5, language_limit=3`.
-- [ ] `GLOSSARY.md`: remove any entry describing removed shaping behaviour.
+- [x] `GLOSSARY.md`: remove any entry describing removed shaping behaviour.
 
 ### 12. Bundle the GitHub context data clump (optional refactor)
 `(..., username, token, ...)` travels through every `github::` fn signature. A small
 `GitHubCtx<'a> { username, token }` (fetcher stays a separate generic param) would
 shrink every signature. Judgement call — do it opportunistically, not as its own PR.
+
+- [x] Done in T6: `GitHubCtx<'a>` lives in `src/github/domain.rs`, re-exported via
+      `github::`. All call sites (3 route handlers, cron warmer, github tests)
+      updated; `client.rs` (`execute_graphql`) untouched.
 
 ---
 

@@ -79,6 +79,34 @@ impl ResponseBuilder {
     }
 }
 
+// --- Commits endpoint (shared by v1 and v2) ---
+
+/// The two commits routes (`/commits/latest` and `/v2/commits/latest`) are one
+/// pipeline behind different `EndpointConfig`s: v1 pins `fixed_params`, v2
+/// takes full query parameters. Everything else — cache, auth, shaping,
+/// response headers — is identical, so both routes call this once.
+async fn commits_endpoint(
+    req: Request,
+    ctx: RouteContext<()>,
+    endpoint: EndpointConfig,
+) -> Result<Response> {
+    run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
+        let fetcher = github::RealHttpFetch;
+        let gh = github::GitHubCtx {
+            username: &rctx.auth.username,
+            token: &rctx.auth.token,
+        };
+        github::get_commits_list(
+            &fetcher,
+            gh,
+            rctx.params.limit,
+            rctx.params.history_limit,
+            rctx.params.language_limit,
+            &rctx.rules.excluded_repos,
+        ).await
+    }).await
+}
+
 // --- Scheduled cache warming ---
 
 /// Warm the default v2 query for every whitelisted profile. Keys are derived
@@ -107,8 +135,9 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             }
 
             let fetcher = github::RealHttpFetch;
+            let gh = github::GitHubCtx { username: username.as_str(), token: &token };
             if let Ok((commits, cost)) = github::get_commits_list(
-                &fetcher, username, &token, params.limit, params.history_limit, params.language_limit, &excluded,
+                &fetcher, gh, params.limit, params.history_limit, params.language_limit, &excluded,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
                     .with_header("Cache-Control", "s-maxage=300")
@@ -149,42 +178,18 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         })
         // v1 commits — username-only adapter with fixed limits, routes through get_commits_list
         .get_async("/commits/latest", |req, ctx| async move {
-            let endpoint = EndpointConfig {
+            commits_endpoint(req, ctx, EndpointConfig {
                 name: "/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
                 fixed_params: Some((5, 5, 3)),
-            };
-            run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
-                let fetcher = github::RealHttpFetch;
-                github::get_commits_list(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                    rctx.params.limit,
-                    rctx.params.history_limit,
-                    rctx.params.language_limit,
-                    &rctx.rules.excluded_repos,
-                ).await
             }).await
         })
         // v2 commits — full param support
         .get_async("/v2/commits/latest", |req, ctx| async move {
-            let endpoint = EndpointConfig {
+            commits_endpoint(req, ctx, EndpointConfig {
                 name: "/v2/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
                 fixed_params: None,
-            };
-            run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
-                let fetcher = github::RealHttpFetch;
-                github::get_commits_list(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                    rctx.params.limit,
-                    rctx.params.history_limit,
-                    rctx.params.language_limit,
-                    &rctx.rules.excluded_repos,
-                ).await
             }).await
         })
         // Streak
@@ -196,11 +201,11 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             };
             run_pipeline(&req, &ctx.env, &WorkersCache, &endpoint, |rctx| async move {
                 let fetcher = github::RealHttpFetch;
-                let (data, cost) = github::get_streak_info(
-                    &fetcher,
-                    &rctx.auth.username,
-                    &rctx.auth.token,
-                ).await?;
+                let gh = github::GitHubCtx {
+                    username: &rctx.auth.username,
+                    token: &rctx.auth.token,
+                };
+                let (data, cost) = github::get_streak_info(&fetcher, gh).await?;
                 Ok((data, cost))
             }).await
         })
