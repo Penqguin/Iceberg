@@ -2,138 +2,138 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GitLanguageNode {
-    pub(crate) name: String,
-    pub(crate) color: Option<String>,
+pub struct GitLanguageNode {
+    pub name: String,
+    pub color: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GitLanguageEdge {
-    pub(crate) size: usize,
-    pub(crate) node: GitLanguageNode,
+pub struct GitLanguageEdge {
+    pub size: usize,
+    pub node: GitLanguageNode,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GitLanguages {
-    pub(crate) edges: Option<Vec<GitLanguageEdge>>,
+pub struct GitLanguages {
+    pub edges: Option<Vec<GitLanguageEdge>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct AuthorUser {
-    pub(crate) login: String,
+pub struct AuthorUser {
+    pub login: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct CommitAuthor {
-    pub(crate) user: Option<AuthorUser>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GqlCommit {
-    pub(crate) abbreviated_oid: String,
-    pub(crate) additions: usize,
-    pub(crate) deletions: usize,
-    pub(crate) commit_url: String,
-    pub(crate) committed_date: DateTime<Utc>,
-    pub(crate) message_headline: String,
-    pub(crate) message_body: String,
-    pub(crate) author: Option<CommitAuthor>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GqlCommitEdge {
-    pub(crate) node: GqlCommit,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GqlHistory {
-    pub(crate) edges: Option<Vec<GqlCommitEdge>>,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GqlTargetCommit {
-    pub(crate) history: GqlHistory,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct DefaultBranchRef {
-    pub(crate) target: Option<GqlTargetCommit>,
+pub struct CommitAuthor {
+    pub user: Option<AuthorUser>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RepositoryNode {
-    pub(crate) name_with_owner: String,
-    pub(crate) languages: Option<GitLanguages>,
-    pub(crate) default_branch_ref: Option<DefaultBranchRef>,
+pub struct GqlCommit {
+    pub abbreviated_oid: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub commit_url: String,
+    pub committed_date: DateTime<Utc>,
+    pub message_headline: String,
+    pub message_body: String,
+    pub author: Option<CommitAuthor>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct RepositoriesConnection {
-    pub(crate) nodes: Option<Vec<RepositoryNode>>,
+pub struct GqlCommitEdge {
+    pub node: GqlCommit,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct UserRepos {
-    pub(crate) repositories: RepositoriesConnection,
+pub struct GqlHistory {
+    pub edges: Option<Vec<GqlCommitEdge>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(crate) struct ReposResponseData {
-    pub(crate) user: Option<UserRepos>,
+pub struct GqlTargetCommit {
+    pub history: GqlHistory,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct GqlCost {
-    pub(crate) actual_cost: u64,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GqlExtensions {
-    pub(crate) cost: GqlCost,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct GraphQLResponse<T> {
-    pub(crate) data: Option<T>,
-    pub(crate) errors: Option<Vec<serde_json::Value>>,
-    pub(crate) extensions: Option<GqlExtensions>,
+pub struct DefaultBranchRef {
+    pub target: Option<GqlTargetCommit>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ContributionDay {
-    pub(crate) contribution_count: usize,
-    pub(crate) date: String,
+pub struct RepositoryNode {
+    pub name_with_owner: String,
+    pub languages: Option<GitLanguages>,
+    pub default_branch_ref: Option<DefaultBranchRef>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct RepositoriesConnection {
+    pub nodes: Option<Vec<RepositoryNode>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct UserRepos {
+    pub repositories: RepositoriesConnection,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ReposResponseData {
+    pub user: Option<UserRepos>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ContributionWeek {
-    pub(crate) contribution_days: Vec<ContributionDay>,
+pub struct GqlCost {
+    pub actual_cost: u64,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GqlExtensions {
+    pub cost: GqlCost,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GraphQLResponse<T> {
+    pub data: Option<T>,
+    pub errors: Option<Vec<serde_json::Value>>,
+    pub extensions: Option<GqlExtensions>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ContributionCalendar {
-    pub(crate) weeks: Vec<ContributionWeek>,
+pub struct ContributionDay {
+    pub contribution_count: usize,
+    pub date: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ContributionsCollection {
-    pub(crate) contribution_calendar: ContributionCalendar,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub(crate) struct StreakUserData {
-    pub(crate) user: StreakUser,
+pub struct ContributionWeek {
+    pub contribution_days: Vec<ContributionDay>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct StreakUser {
-    pub(crate) contributions_collection: ContributionsCollection,
+pub struct ContributionCalendar {
+    pub weeks: Vec<ContributionWeek>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionsCollection {
+    pub contribution_calendar: ContributionCalendar,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct StreakUserData {
+    pub user: StreakUser,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreakUser {
+    pub contributions_collection: ContributionsCollection,
 }

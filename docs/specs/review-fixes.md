@@ -112,19 +112,19 @@ backoff (waits 1+2+4+8 = 15s plus per-attempt fetch time), total wall time is un
 `mockito` is a dependency but unused; `GITHUB_GRAPHQL_URL` is a hard const, so nothing
 can point the client at the mock server.
 
-- [ ] Make the GraphQL URL overridable (env var or a parameter on
+- [x] Make the GraphQL URL overridable (env var or a parameter on
       `execute_with_retries` — one seam, not a global mutable).
-- [ ] Rewrite the test to build `RealHttpFetch`-equivalent requests against
+- [x] Rewrite the test to build `RealHttpFetch`-equivalent requests against
       `server.url()`: assert a well-formed GraphQL request is sent and the response
       parses into `ReposResponseData`.
-- [ ] Add a partial-failure test: GraphQL `errors` array with partial `data` — must
+- [x] Add a partial-failure test: GraphQL `errors` array with partial `data` — must
       return `AppError::GitHubError`, matching `execute_graphql` behaviour.
 
 ### 8. Delete the placeholder benchmark
 **Where**: `benches/performance.rs` — benches `black_box(2 + 2)`.
 
-- [ ] Delete it.
-- [ ] Add a real criterion bench for the pure hot path: `shape_commits` over ~10 repos
+- [x] Delete it.
+- [x] Add a real criterion bench for the pure hot path: `shape_commits` over ~10 repos
       × 5 commits of synthetic data (pure fn, no runtime needed).
 
 ---

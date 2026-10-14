@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::github::client::{execute_graphql, HttpFetch};
+use crate::github::client::{execute_graphql, GITHUB_GRAPHQL_URL, HttpFetch};
 use crate::github::streak::{calculate_current_streak, calculate_highest_streak, is_active};
 use crate::github::types::*;
 use crate::models::{StreakInfo};
@@ -76,7 +76,7 @@ pub async fn get_commits_list<F: HttpFetch>(
     });
 
     let (data, total_cost): (ReposResponseData, u64) =
-        execute_graphql(fetcher, gh.token, query, variables, Some(timeout_secs)).await?;
+        execute_graphql(fetcher, GITHUB_GRAPHQL_URL, gh.token, query, variables, Some(timeout_secs)).await?;
 
     let repos: Vec<RepositoryNode> = data
         .user
@@ -112,7 +112,7 @@ pub async fn get_streak_info<F: HttpFetch>(
     "#;
 
     let (data, cost): (StreakUserData, u64) =
-        execute_graphql(fetcher, gh.token, query, json!({ "username": gh.username }), Some(timeout_secs)).await?;
+        execute_graphql(fetcher, GITHUB_GRAPHQL_URL, gh.token, query, json!({ "username": gh.username }), Some(timeout_secs)).await?;
 
     let days = flatten_contribution_days(&data.user.contributions_collection.contribution_calendar);
     let as_of = Utc::now().naive_utc().date();

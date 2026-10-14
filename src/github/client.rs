@@ -7,7 +7,10 @@ use worker::*;
 #[cfg(test)]
 use tokio::time as tokio_time;
 
-const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
+/// The production GitHub GraphQL endpoint. Domain fetchers pin this; tests
+/// point `execute_graphql` at a mock server instead (the URL is a plain
+/// parameter — a seam, not a global mutable).
+pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 const DEFAULT_TIMEOUT_SECS: u64 = 15;
 
 /// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
@@ -49,6 +52,9 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+// Used only with concrete generics (no dyn/Send bounds needed anywhere), so
+// the async-fn-in-trait lint's concern doesn't apply.
+#[allow(async_fn_in_trait)]
 pub trait HttpFetch {
     async fn post_json(&self, url: &str, token: &str, body: &serde_json::Value, timeout_secs: u64) -> std::result::Result<HttpResponse, AppError>;
 }
@@ -103,8 +109,13 @@ impl HttpFetch for RealHttpFetch {
 
 // --- GraphQL execution layer ---
 
-pub(crate) async fn execute_graphql<F, R>(
+/// Execute one GraphQL call against `graphql_url` with retries. The URL is
+/// threaded as a parameter from callers: domain fetchers pin the production
+/// const, tests point it at their mock server. `timeout_secs` is the whole
+/// retry-cycle budget (see `execute_with_retries`).
+pub async fn execute_graphql<F, R>(
     fetcher: &F,
+    graphql_url: &str,
     token: &str,
     query: &str,
     variables: serde_json::Value,
@@ -117,7 +128,7 @@ where
     let timeout = timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let payload = json!({ "query": query, "variables": variables });
 
-    let resp = execute_with_retries::<F, GraphQLResponse<R>>(fetcher, token, &payload, timeout).await?;
+    let resp = execute_with_retries::<F, GraphQLResponse<R>>(fetcher, graphql_url, token, &payload, timeout).await?;
     let cost = resp.extensions.as_ref().map(|e| e.cost.actual_cost).unwrap_or(0);
 
     if let Some(errors) = resp.errors {
@@ -134,6 +145,7 @@ where
 
 async fn execute_with_retries<F, R>(
     fetcher: &F,
+    graphql_url: &str,
     token: &str,
     payload: &serde_json::Value,
     timeout_secs: u64,
@@ -158,7 +170,7 @@ where
             )));
         }
 
-        let resp = fetcher.post_json(GITHUB_GRAPHQL_URL, token, payload, timeout_secs).await?;
+        let resp = fetcher.post_json(graphql_url, token, payload, timeout_secs).await?;
 
         let is_rate_limited = resp.status == 429
             || (resp.status == 403 && resp.headers.get("X-RateLimit-Remaining").map(|s| s.as_str()) == Some("0"));
