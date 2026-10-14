@@ -1,5 +1,6 @@
 use crate::error::{AppError, Unauthorized};
 use crate::github::types::*;
+use crate::log_warn;
 use futures::future::{select, Either};
 use serde_json::json;
 use std::collections::HashMap;
@@ -12,16 +13,6 @@ use tokio::time as tokio_time;
 /// parameter — a seam, not a global mutable).
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 const DEFAULT_TIMEOUT_SECS: u64 = 15;
-
-/// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
-macro_rules! log_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "wasm32")]
-        console_warn!($($arg)*);
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!($($arg)*);
-    }};
-}
 
 /// Sleep — `tokio::time::sleep` in tests, `worker::Delay` in production (wasm32).
 /// Clock seam — tokio's mock clock under test (tracks `sleep`, so paused/advanced

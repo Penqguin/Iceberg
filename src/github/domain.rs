@@ -18,14 +18,16 @@ pub struct GitHubCtx<'a> {
 }
 
 /// `timeout_secs` is the whole-cycle budget passed to `execute_graphql` (see
-/// `execute_with_retries` for how the deadline is enforced).
+/// `execute_with_retries` for how the deadline is enforced). `rules` carries
+/// the product shaping rules (excluded repos) — passed as itself, never
+/// unwrapped and reassembled.
 pub async fn get_commits_list<F: HttpFetch>(
     fetcher: &F,
     gh: GitHubCtx<'_>,
     limit: usize,
     history_limit: usize,
     language_limit: usize,
-    excluded_repos: &[String],
+    rules: &ShapingRules,
     timeout_secs: u64,
 ) -> std::result::Result<(crate::models::CommitsListResponse, u64), AppError> {
     let query = r#"
@@ -83,8 +85,7 @@ pub async fn get_commits_list<F: HttpFetch>(
         .and_then(|u| u.repositories.nodes)
         .unwrap_or_default();
 
-    let rules = ShapingRules::new(excluded_repos.to_vec());
-    Ok((shape_commits(repos, gh.username, limit, history_limit, &rules), total_cost))
+    Ok((shape_commits(repos, gh.username, limit, history_limit, rules), total_cost))
 }
 
 // --- Streak ---

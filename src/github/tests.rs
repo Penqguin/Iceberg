@@ -209,77 +209,31 @@ fn active_empty() {
 
 #[test]
 fn author_matches_login() {
-    let commit = GqlCommit {
-        abbreviated_oid: "abc".into(),
-        additions: 1, deletions: 0,
-        commit_url: "url".into(),
-        committed_date: Utc::now(),
-        message_headline: "h".into(),
-        message_body: "b".into(),
-        author: Some(CommitAuthor {
-            user: Some(AuthorUser { login: "penqguin".into() }),
-        }),
-    };
+    let commit = crate::test_fixtures::commit().login("penqguin").build();
     assert!(matches_author(&commit, "penqguin"));
 }
 
 #[test]
 fn author_case_insensitive() {
-    let commit = GqlCommit {
-        abbreviated_oid: "abc".into(),
-        additions: 1, deletions: 0,
-        commit_url: "url".into(),
-        committed_date: Utc::now(),
-        message_headline: "h".into(),
-        message_body: "b".into(),
-        author: Some(CommitAuthor {
-            user: Some(AuthorUser { login: "Penqguin".into() }),
-        }),
-    };
+    let commit = crate::test_fixtures::commit().login("Penqguin").build();
     assert!(matches_author(&commit, "penqguin"));
 }
 
 #[test]
 fn author_does_not_match() {
-    let commit = GqlCommit {
-        abbreviated_oid: "abc".into(),
-        additions: 1, deletions: 0,
-        commit_url: "url".into(),
-        committed_date: Utc::now(),
-        message_headline: "h".into(),
-        message_body: "b".into(),
-        author: Some(CommitAuthor {
-            user: Some(AuthorUser { login: "other".into() }),
-        }),
-    };
+    let commit = crate::test_fixtures::commit().login("other").build();
     assert!(!matches_author(&commit, "penqguin"));
 }
 
 #[test]
 fn author_no_user_field() {
-    let commit = GqlCommit {
-        abbreviated_oid: "abc".into(),
-        additions: 1, deletions: 0,
-        commit_url: "url".into(),
-        committed_date: Utc::now(),
-        message_headline: "h".into(),
-        message_body: "b".into(),
-        author: Some(CommitAuthor { user: None }),
-    };
+    let commit = crate::test_fixtures::commit().user_field_only().build();
     assert!(!matches_author(&commit, "penqguin"));
 }
 
 #[test]
 fn author_none() {
-    let commit = GqlCommit {
-        abbreviated_oid: "abc".into(),
-        additions: 1, deletions: 0,
-        commit_url: "url".into(),
-        committed_date: Utc::now(),
-        message_headline: "h".into(),
-        message_body: "b".into(),
-        author: None,
-    };
+    let commit = crate::test_fixtures::commit().author_none().build();
     assert!(!matches_author(&commit, "penqguin"));
 }
 
@@ -364,7 +318,7 @@ async fn get_commits_list_uses_requested_limits_exactly() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 5, 5, 3, &[], 15).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 5, 5, 3, &ShapingRules::none(), 15).await.unwrap();
     let variables = &fake.last_request_body()["variables"];
     assert_eq!(variables["firstRepos"], 5, "limit=5 must fetch exactly 5 repos — no clamp-up");
     assert_eq!(variables["firstCommits"], 5);
@@ -376,7 +330,7 @@ async fn get_commits_list_plumbs_language_limit() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 7, &[], 15).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 7, &ShapingRules::none(), 15).await.unwrap();
     let variables = &fake.last_request_body()["variables"];
     assert_eq!(variables["firstRepos"], 10);
     assert_eq!(variables["firstCommits"], 5);
@@ -388,7 +342,7 @@ async fn get_commits_list_caps_repos_at_50_for_safety() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 60, 5, 3, &[], 15).await.unwrap();
+    let (_resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 60, 5, 3, &ShapingRules::none(), 15).await.unwrap();
     assert_eq!(fake.last_request_body()["variables"]["firstRepos"], 50);
 }
 
@@ -399,7 +353,7 @@ async fn get_commits_list_empty_repos() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[], 15).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &ShapingRules::none(), 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -408,7 +362,7 @@ async fn get_commits_list_graphql_error() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":null,"errors":[{"message":"Not Found"}]}"#);
 
-    let result = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[], 15).await;
+    let result = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &ShapingRules::none(), 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::GitHubError(msg) => assert!(msg.contains("Not Found")),
@@ -422,7 +376,7 @@ async fn get_commits_list_rate_limited_then_ok() {
     fake.push_rate_limited();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[], 15).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &ShapingRules::none(), 15).await.unwrap();
     assert!(resp.commits.is_empty());
 }
 
@@ -431,7 +385,7 @@ async fn get_commits_list_unauthorized() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(401, r#"{"message":"Bad credentials"}"#);
 
-    let result = super::get_commits_list(&fake, super::GitHubCtx { username: "testuser", token: "bad_token" }, 10, 5, 3, &[], 15).await;
+    let result = super::get_commits_list(&fake, super::GitHubCtx { username: "testuser", token: "bad_token" }, 10, 5, 3, &ShapingRules::none(), 15).await;
     assert!(result.is_err());
     match result.unwrap_err() {
         AppError::Unauthorized(crate::error::Unauthorized::GitHubApi(msg)) => assert!(msg.contains("Bad credentials")),
@@ -447,8 +401,8 @@ async fn get_commits_list_exclusions_flow_through() {
         {"nameWithOwner":"me/public"}
     ]}}}}"#);
 
-    let excluded = vec!["me/private".to_string()];
-    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &excluded, 15).await.unwrap();
+    let rules = ShapingRules::new(vec!["me/private".to_string()]);
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &rules, 15).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(resp.stats.total_commits, 0);
 }
@@ -515,7 +469,7 @@ async fn timeout_plumbed_through_to_fetcher() {
     let fake = FakeHttpFetch::new();
     fake.push_ok(200, r#"{"data":{"user":{"repositories":{"nodes":[]}}}}"#);
 
-    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &[], 21).await.unwrap();
+    let (resp, _cost) = super::get_commits_list(&fake, gh("testuser"), 10, 5, 3, &ShapingRules::none(), 21).await.unwrap();
     assert!(resp.commits.is_empty());
     assert_eq!(fake.last_timeout_secs(), Some(21));
 }

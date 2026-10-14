@@ -79,7 +79,9 @@ impl HttpFetch for RealSocketFetch {
 }
 
 /// Parse a full HTTP/1.1 response (head + body read to EOF) into the crate's
-/// `HttpResponse`. Handles `Content-Length` and chunked transfer bodies.
+/// `HttpResponse`. The request sends `Connection: close`, so mockito always
+/// serves a close-delimited body: the remainder after the head is the body,
+/// regardless of whether Content-Length was present.
 fn parse_http_response(raw: &[u8]) -> Result<HttpResponse, AppError> {
     let text = String::from_utf8_lossy(raw);
     let (head, body) = text
@@ -103,46 +105,11 @@ fn parse_http_response(raw: &[u8]) -> Result<HttpResponse, AppError> {
         }
     }
 
-    let body = if headers
-        .get("transfer-encoding")
-        .map(|v| v.contains("chunked"))
-        .unwrap_or(false)
-    {
-        decode_chunked(body)
-    } else {
-        // With `Connection: close` the remainder after the head is the body,
-        // regardless of whether Content-Length was present.
-        body.to_string()
-    };
-
     Ok(HttpResponse {
         status,
         headers,
-        body: body.into_bytes(),
+        body: body.as_bytes().to_vec(),
     })
-}
-
-/// Decode a chunked transfer-encoded body.
-fn decode_chunked(body: &str) -> String {
-    let mut out = String::new();
-    let mut rest = body;
-    loop {
-        let Some((size_line, after)) = rest.split_once("\r\n") else { break };
-        let size = match usize::from_str_radix(size_line.trim(), 16) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(_) => break,
-        };
-        // Each chunk is `size` bytes followed by the CRLF terminator.
-        let end = after.char_indices().nth(size).map(|(i, _)| i).unwrap_or(after.len());
-        let end = end.min(after.len());
-        out.push_str(&after[..end]);
-        rest = &after[end..];
-        if rest.starts_with("\r\n") {
-            rest = &rest[2..];
-        }
-    }
-    out
 }
 
 const QUERY: &str = r#"
