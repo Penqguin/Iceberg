@@ -4,6 +4,12 @@ mod cache;
 mod logging;
 mod pipeline;
 
+// Shared test/bench fixtures. Not visible in production builds: compiled only
+// for lib unit tests (`cfg(test)`) and the criterion bench (`bench` feature).
+#[cfg(any(test, feature = "bench"))]
+#[doc(hidden)]
+pub mod test_fixtures;
+
 // Public test/API surface: everything below is reachable from outside the
 // crate (integration tests, benches). `github`'s execution layer
 // (`execute_graphql` + `HttpFetch`) is the seam external HTTP tests go through;
@@ -16,7 +22,7 @@ pub mod shaping;
 use crate::cache::{cache_key, CacheStore, WorkersCache};
 use crate::error::AppError;
 use crate::models::QueryParams;
-use crate::pipeline::{get_config, run_pipeline, CachePolicy, EndpointConfig};
+use crate::pipeline::{get_config, run_pipeline, CachePolicy, EndpointConfig, FixedParams};
 
 // --- Response / CORS seam ---
 
@@ -107,7 +113,7 @@ async fn commits_endpoint(
             rctx.params.limit,
             rctx.params.history_limit,
             rctx.params.language_limit,
-            &rctx.rules.excluded_repos,
+            &rctx.rules,
             rctx.timeout_secs,
         ).await
     }).await
@@ -127,7 +133,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
     let cache = WorkersCache;
     let futs: Vec<_> = config.whitelist.iter().map(|username| {
         let token = config.github_token.clone();
-        let excluded = config.rules_for(username).excluded_repos;
+        let rules = config.rules_for(username);
         let params = QueryParams {
             username: username.clone(),
             limit: 10,
@@ -143,7 +149,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             let fetcher = github::RealHttpFetch;
             let gh = github::GitHubCtx { username: username.as_str(), token: &token };
             if let Ok((commits, cost)) = github::get_commits_list(
-                &fetcher, gh, params.limit, params.history_limit, params.language_limit, &excluded,
+                &fetcher, gh, params.limit, params.history_limit, params.language_limit, &rules,
                 config.request_timeout_secs,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
@@ -188,7 +194,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             commits_endpoint(req, ctx, EndpointConfig {
                 name: "/commits/latest",
                 cache: CachePolicy { ttl_secs: 300 },
-                fixed_params: Some((5, 5, 3)),
+                fixed_params: Some(FixedParams { limit: 5, history_limit: 5, language_limit: 3 }),
             }).await
         })
         // v2 commits — full param support

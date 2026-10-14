@@ -1,6 +1,6 @@
 /// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
-/// Shared with `pipeline`'s validation logging (the client module keeps its
-/// own textual copy; this exported version is the crate-wide path).
+/// The crate's single definition: modules that need to warn do
+/// `use crate::log_warn;` and call the macro unqualified.
 #[macro_export]
 macro_rules! log_warn {
     ($($arg:tt)*) => {{

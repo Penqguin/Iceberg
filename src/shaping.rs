@@ -158,46 +158,14 @@ pub fn shape_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-
-    fn repo(name: &str, langs: Vec<(&str, usize)>, commits: Vec<GqlCommit>) -> RepositoryNode {
-        RepositoryNode {
-            name_with_owner: name.into(),
-            languages: Some(GitLanguages {
-                edges: Some(langs.into_iter().map(|(name, size)| GitLanguageEdge {
-                    size,
-                    node: GitLanguageNode { name: name.into(), color: None },
-                }).collect()),
-            }),
-            default_branch_ref: Some(DefaultBranchRef {
-                target: Some(GqlTargetCommit {
-                    history: GqlHistory {
-                        edges: Some(commits.into_iter().map(|node| GqlCommitEdge { node }).collect()),
-                    },
-                }),
-            }),
-        }
-    }
-
-    fn commit(login: &str, date: &str, additions: usize) -> GqlCommit {
-        GqlCommit {
-            abbreviated_oid: "abc".into(),
-            additions,
-            deletions: 0,
-            commit_url: "url".into(),
-            committed_date: chrono::DateTime::parse_from_rfc3339(&format!("{}T12:00:00Z", date)).unwrap().with_timezone(&Utc),
-            message_headline: "h".into(),
-            message_body: "b".into(),
-            author: Some(CommitAuthor { user: Some(AuthorUser { login: login.into() }) }),
-        }
-    }
+    use crate::test_fixtures::{commit, repo};
 
     #[test]
     fn excluded_repos_are_filtered() {
         let rules = ShapingRules::new(vec!["me/private".into()]);
         let repos = vec![
-            repo("me/private", vec![], vec![commit("me", "2024-01-02", 10)]),
-            repo("me/public", vec![], vec![commit("me", "2024-01-01", 5)]),
+            repo("me/private").by("me", "2024-01-02", 10).build(),
+            repo("me/public").by("me", "2024-01-01", 5).build(),
         ];
         let out = shape_commits(repos, "me", 10, 5, &rules);
         assert_eq!(out.commits.len(), 1);
@@ -208,10 +176,10 @@ mod tests {
     #[test]
     fn foreign_authors_filtered() {
         let rules = ShapingRules::none();
-        let repos = vec![repo("me/repo", vec![], vec![
-            commit("me", "2024-01-02", 10),
-            commit("bot", "2024-01-03", 99),
-        ])];
+        let repos = vec![repo("me/repo")
+            .by("me", "2024-01-02", 10)
+            .by("bot", "2024-01-03", 99)
+            .build()];
         let out = shape_commits(repos, "me", 10, 5, &rules);
         assert_eq!(out.commits.len(), 1);
         assert_eq!(out.stats.total_additions, 10);
@@ -220,10 +188,13 @@ mod tests {
     #[test]
     fn stats_window_respects_history_limit() {
         let rules = ShapingRules::none();
-        let commits: Vec<GqlCommit> = (1..=5)
-            .map(|i| commit("me", &format!("2024-01-0{}", i), 10))
-            .collect();
-        let repos = vec![repo("me/repo", vec![], commits)];
+        let repos = vec![repo("me/repo")
+            .commits(
+                (1..=5)
+                    .map(|i| commit().login("me").on(&format!("2024-01-0{}", i)).additions(10).build())
+                    .collect(),
+            )
+            .build()];
         // history_limit 2 → stats over the 2 most recent commits only
         let out = shape_commits(repos, "me", 10, 2, &rules);
         assert_eq!(out.stats.total_commits, 5); // total counted before trim
@@ -234,9 +205,11 @@ mod tests {
     #[test]
     fn languages_roll_up_by_repo() {
         let rules = ShapingRules::none();
-        let repos = vec![repo("me/rust-repo", vec![("Rust", 80), ("JS", 20)], vec![
-            commit("me", "2024-01-01", 1),
-        ])];
+        let repos = vec![repo("me/rust-repo")
+            .language("Rust", 80)
+            .language("JS", 20)
+            .by("me", "2024-01-01", 1)
+            .build()];
         let out = shape_commits(repos, "me", 10, 5, &rules);
         assert_eq!(out.languages.len(), 2);
         assert_eq!(out.languages[0].name, "Rust");
@@ -249,12 +222,10 @@ mod tests {
         // Rust is dominant (>80% of the total); its size must be the raw
         // GitHub roll-up, untouched by any presentation-shaping rule.
         let repos = vec![
-            repo("me/a", vec![("Rust", 90), ("JS", 10)], vec![
-                commit("me", "2024-01-01", 1),
-            ]),
-            repo("me/b", vec![("Rust", 90)], vec![
-                commit("me", "2024-01-02", 1),
-            ]),
+            repo("me/a").language("Rust", 90).language("JS", 10)
+                .by("me", "2024-01-01", 1).build(),
+            repo("me/b").language("Rust", 90)
+                .by("me", "2024-01-02", 1).build(),
         ];
         let out = shape_commits(repos, "me", 10, 5, &rules);
         let rust = out.languages.iter().find(|l| l.name == "Rust").unwrap();
@@ -274,10 +245,13 @@ mod tests {
     #[test]
     fn zero_limit_falls_back_to_ten() {
         let rules = ShapingRules::none();
-        let commits: Vec<GqlCommit> = (1..=15)
-            .map(|i| commit("me", &format!("2024-01-{:02}", i), 1))
-            .collect();
-        let repos = vec![repo("me/repo", vec![], commits)];
+        let repos = vec![repo("me/repo")
+            .commits(
+                (1..=15)
+                    .map(|i| commit().login("me").on(&format!("2024-01-{:02}", i)).additions(1).build())
+                    .collect(),
+            )
+            .build()];
         let out = shape_commits(repos, "me", 0, 5, &rules);
         assert_eq!(out.commits.len(), 10);
     }

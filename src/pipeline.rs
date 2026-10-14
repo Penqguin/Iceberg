@@ -1,21 +1,12 @@
 use crate::cache::{cache_key, CacheStore};
 use crate::error::AppError;
+use crate::log_warn;
 use crate::models::{QueryParams, ResolvedAuth};
 use crate::shaping::ShapingRules;
 use crate::ResponseBuilder;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use worker::*;
-
-/// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
-macro_rules! log_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "wasm32")]
-        console_warn!($($arg)*);
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!($($arg)*);
-    }};
-}
 
 static USERNAME_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9\-]+$").unwrap());
 
@@ -113,10 +104,10 @@ const MAX_GITHUB_LOGIN_LEN: usize = 39;
 fn rejected_input(field: &str, reason: &str, raw: Option<&str>) -> AppError {
     match (field, raw) {
         ("username", Some(value)) if value.len() > MAX_GITHUB_LOGIN_LEN => {
-            crate::log_warn!("Rejected query param: field=username reason={} (username length {} — value withheld)", reason, value.len());
+            log_warn!("Rejected query param: field=username reason={} (username length {} — value withheld)", reason, value.len());
         }
         _ => {
-            crate::log_warn!("Rejected query param: field={} reason={}", field, reason);
+            log_warn!("Rejected query param: field={} reason={}", field, reason);
         }
     }
     AppError::ValidationError(field.to_string(), reason.to_string())
@@ -191,14 +182,32 @@ pub struct CachePolicy {
     pub ttl_secs: u64,
 }
 
+/// The limit triple pinned by username-only endpoints (v1), with one honest
+/// name instead of a bare `(usize, usize, usize)` tuple.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FixedParams {
+    pub limit: usize,
+    pub history_limit: usize,
+    pub language_limit: usize,
+}
+
+impl FixedParams {
+    /// Overwrite the parsed query-param limits with the endpoint's fixed ones.
+    fn apply_to(self, params: &mut QueryParams) {
+        params.limit = self.limit;
+        params.history_limit = self.history_limit;
+        params.language_limit = self.language_limit;
+    }
+}
+
 /// Endpoint configuration. `fixed_params` is for username-only endpoints
 /// (v1) whose limits don't respond to query parameters; `None` means full
-/// parameter support (v2). Tuple order: `(limit, history_limit, language_limit)`.
+/// parameter support (v2).
 pub struct EndpointConfig {
     /// Cache-key namespace, e.g. "/v2/commits/latest".
     pub name: &'static str,
     pub cache: CachePolicy,
-    pub fixed_params: Option<(usize, usize, usize)>,
+    pub fixed_params: Option<FixedParams>,
 }
 
 pub struct RequestContext {
@@ -266,10 +275,8 @@ where
     };
 
     // 3. Apply endpoint-fixed parameters (username-only endpoints)
-    if let Some((limit, history_limit, language_limit)) = endpoint.fixed_params {
-        params.limit = limit;
-        params.history_limit = history_limit;
-        params.language_limit = language_limit;
+    if let Some(fixed) = endpoint.fixed_params {
+        fixed.apply_to(&mut params);
     }
 
     // 4. Resolve authentication
@@ -407,34 +414,86 @@ mod tests {
         assert!(parse_and_validate_query_params(&url_with("username=test&limit=0")).is_err());
     }
 
-    #[test]
-    fn fixed_params_override_parsed_values() {
-        let mut params = parse_and_validate_query_params(&url_with("username=test&limit=15")).unwrap();
-        let endpoint = EndpointConfig {
-            name: "/commits/latest",
-            cache: CachePolicy { ttl_secs: 300 },
-            fixed_params: Some((5, 5, 3)),
-        };
-        if let Some((limit, history_limit, language_limit)) = endpoint.fixed_params {
-            params.limit = limit;
-            params.history_limit = history_limit;
-            params.language_limit = language_limit;
+    /// A cache double that is always a miss and stores silently — for tests
+    /// that exercise the pipeline choreography without cache noise.
+    struct MissCache;
+
+    impl CacheStore<crate::TestResponse> for MissCache {
+        async fn get(&self, _key: &str) -> Result<Option<crate::TestResponse>> {
+            Ok(None)
         }
-        assert_eq!(params.limit, 5);
-        assert_eq!(params.history_limit, 5);
-        assert_eq!(params.language_limit, 3);
+
+        async fn put(&self, _key: &str, _response: crate::TestResponse) -> Result<()> {
+            Ok(())
+        }
     }
 
-    #[test]
-    fn no_fixed_params_keeps_parsed_values() {
-        let params = parse_and_validate_query_params(&url_with("username=test&limit=15")).unwrap();
-        let endpoint = EndpointConfig {
-            name: "/v2/commits/latest",
-            cache: CachePolicy { ttl_secs: 300 },
-            fixed_params: None,
+    /// Drive the real pipeline (`run_pipeline_steps` + `TestOut`) with a
+    /// handler that echoes the resolved query params back in the body, so the
+    /// test observes the params the handler actually received.
+    async fn run_echo_pipeline(endpoint: EndpointConfig, query: &str) -> crate::TestResponse {
+        let cache = MissCache;
+        let cfg = AppConfig {
+            github_token: "system-token".into(),
+            whitelist: vec!["penqguin".into()],
+            excluded_repos: vec![],
+            request_timeout_secs: 15,
         };
-        assert!(endpoint.fixed_params.is_none());
-        assert_eq!(params.limit, 15);
+        run_pipeline_steps::<TestOut, _, _, _, _>(
+            url_with(query),
+            None,
+            cfg,
+            &cache,
+            &endpoint,
+            |rctx| async move {
+                Ok((serde_json::json!({
+                    "limit": rctx.params.limit,
+                    "history_limit": rctx.params.history_limit,
+                    "language_limit": rctx.params.language_limit,
+                }), 1u64))
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fixed_params_override_parsed_values() {
+        let out = run_echo_pipeline(
+            EndpointConfig {
+                name: "/commits/latest",
+                cache: CachePolicy { ttl_secs: 300 },
+                fixed_params: Some(FixedParams { limit: 5, history_limit: 5, language_limit: 3 }),
+            },
+            // Deliberately different from the fixed values: parsed values must lose.
+            "username=penqguin&limit=20&history_limit=30&language_limit=8",
+        )
+        .await;
+
+        out.assert_status(200);
+        let body = out.body_json().unwrap();
+        assert_eq!(body["limit"].as_u64(), Some(5));
+        assert_eq!(body["history_limit"].as_u64(), Some(5));
+        assert_eq!(body["language_limit"].as_u64(), Some(3));
+    }
+
+    #[tokio::test]
+    async fn no_fixed_params_keeps_parsed_values() {
+        let out = run_echo_pipeline(
+            EndpointConfig {
+                name: "/v2/commits/latest",
+                cache: CachePolicy { ttl_secs: 300 },
+                fixed_params: None,
+            },
+            "username=penqguin&limit=15&history_limit=25&language_limit=7",
+        )
+        .await;
+
+        out.assert_status(200);
+        let body = out.body_json().unwrap();
+        assert_eq!(body["limit"].as_u64(), Some(15));
+        assert_eq!(body["history_limit"].as_u64(), Some(25));
+        assert_eq!(body["language_limit"].as_u64(), Some(7));
     }
 
     fn config() -> AppConfig {
