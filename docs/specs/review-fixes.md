@@ -177,16 +177,16 @@ live-verified):
   *Trigger to re-open:* WHITELIST grows to ~2+ users (warmer does N round trips every
   5 min), or an endpoint that genuinely needs two datasets (e.g. commits + streak in
   one response). Until then: don't build it.
-- **Cache hit/miss metrics** — two honest phases, neither urgent:
-  1. *Zero-code*: logging only. `run_pipeline` already knows the HIT/MISS outcome —
-     add one `console_log!` line per request (`cache_hit|miss, endpoint, key`) and
-     enable Workers Observability (`[observability] enabled = true` in
-     `wrangler.toml`); the dashboard query API can then count cache outcomes with no
-     new bindings or quota concerns. The `log_warn!` cache-failure lines already
-     exist and would count as miss-shaped events.
-  2. *Proper sink (only if dashboards are needed)*: Workers Analytics Engine binding
-     (`writeInflux` line per request). Small diff, but it adds a dataset + binding
-     dependency — don't do phase 2 until phase 1's counts feel too coarse.
+- **Cache hit/miss metrics** — code belongs in `src/pipeline.rs` and `src/logging.rs`,
+  config switch in `wrangler.toml`. Built in two phases; **as of 2026-10-14, phase 1 is implemented** and shipped:
+  1. *✅ Implemented*: one structured `log_info!` line per cache outcome in
+     `run_pipeline` (`cache outcome=hit|miss endpoint=… username=…`), and cache
+     failures now log as `cache outcome=error op=get|put key=…`. Workers
+     Observability enabled in `wrangler.toml`, so the dashboard query API counts
+     cache outcomes with no new bindings. No quota concerns.
+  2. *Not built*: Workers Analytics Engine binding (`writeInflux` per request).
+     Only if phase 1's log counts feel too coarse — it adds a dataset + binding
+     dependency.
 - **`AppError::CacheError` variant** — closed as dead by design, not merely deferred:
   the spec (T1) requires cache failures to degrade gracefully, so such an error is
   never allowed to reach a response. It would only ever classify a log line, which

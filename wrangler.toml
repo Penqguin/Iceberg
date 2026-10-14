@@ -2,6 +2,10 @@ name = "iceberg"
 main = "build/index.js"
 compatibility_date = "2024-04-05"
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [triggers]
 # Warmer skips entries that already exist (TTL 300s), so the cron frequency
 # only controls how often we check, not how often we fetch.

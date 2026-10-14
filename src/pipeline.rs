@@ -1,5 +1,6 @@
 use crate::cache::{cache_key, CacheStore};
 use crate::error::AppError;
+use crate::log_info;
 use crate::log_warn;
 use crate::models::{QueryParams, ResolvedAuth};
 use crate::shaping::ShapingRules;
@@ -313,17 +314,19 @@ where
         Ok(Some(cached)) => Some(cached),
         Ok(None) => None,
         Err(e) => {
-            log_warn!("cache GET failed for {} ({}); treating as miss, proceeding uncached", key, e);
+            log_warn!("cache outcome=error op={} key={} ({})", "get", key, e);
             None
         }
     };
     if let Some(cached) = hit {
         let mut cached = Out::unfreeze(cached).await?;
         Out::stamp(&mut cached, "X-Cache", "HIT")?;
+        log_info!("cache outcome=hit endpoint={} username={}", endpoint.name, auth.username);
         return Ok(cached);
     }
 
     // 6. Execute domain handler
+    let username = auth.username.clone(); // auth moves into RequestContext; logs need it after
     let rules = config.rules_for(&auth.username);
     let rctx = RequestContext { auth, params, rules, timeout_secs: config.request_timeout_secs };
     let (data, query_cost) = match handler(rctx).await {
@@ -340,10 +343,11 @@ where
     let mut cache_resp = Out::clone_copy(&mut resp)?;
     Out::stamp(&mut cache_resp, "X-Cache", "HIT")?;
     if let Err(e) = cache.put(&key, cache_resp).await {
-        log_warn!("cache PUT failed for {} ({}); serving response uncached", key, e);
+        log_warn!("cache outcome=error op={} key={} ({})", "put", key, e);
     }
 
     Out::stamp(&mut resp, "X-Cache", "MISS")?;
+    log_info!("cache outcome=miss endpoint={} username={}", endpoint.name, username);
 
     Ok(resp)
 }

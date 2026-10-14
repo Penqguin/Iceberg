@@ -10,3 +10,15 @@ macro_rules! log_warn {
         eprintln!($($arg)*);
     }};
 }
+
+/// Log an informational line — `console_log!` on wasm32, `println!` on native.
+/// Same single-home convention as [`log_warn`].
+#[macro_export]
+macro_rules! log_info {
+    ($($arg:tt)*) => {{
+        #[cfg(target_arch = "wasm32")]
+        worker::console_log!($($arg)*);
+        #[cfg(not(target_arch = "wasm32"))]
+        println!($($arg)*);
+    }};
+}
