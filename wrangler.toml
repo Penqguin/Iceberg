@@ -3,7 +3,9 @@ main = "build/index.js"
 compatibility_date = "2024-04-05"
 
 [triggers]
-crons = ["* * * * *"]
+# Warmer skips entries that already exist (TTL 300s), so the cron frequency
+# only controls how often we check, not how often we fetch.
+crons = ["*/5 * * * *"]
 
 [env.production]
 vars = { WHITELIST = "penqguin" }

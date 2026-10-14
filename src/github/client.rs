@@ -1,5 +1,6 @@
-use crate::error::AppError;
+use crate::error::{AppError, Unauthorized};
 use crate::github::types::*;
+use crate::log_warn;
 use futures::future::{select, Either};
 use serde_json::json;
 use std::collections::HashMap;
@@ -7,20 +8,26 @@ use worker::*;
 #[cfg(test)]
 use tokio::time as tokio_time;
 
-const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
+/// The production GitHub GraphQL endpoint. Domain fetchers pin this; tests
+/// point `execute_graphql` at a mock server instead (the URL is a plain
+/// parameter — a seam, not a global mutable).
+pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
 const DEFAULT_TIMEOUT_SECS: u64 = 15;
 
-/// Log a warning — `console_warn!` on wasm32, `eprintln!` on native.
-macro_rules! log_warn {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "wasm32")]
-        console_warn!($($arg)*);
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!($($arg)*);
-    }};
+/// Sleep — `tokio::time::sleep` in tests, `worker::Delay` in production (wasm32).
+/// Clock seam — tokio's mock clock under test (tracks `sleep`, so paused/advanced
+/// time moves the deadline) and `web_time` in production: on wasm32,
+/// `std::time::Instant` is unimplemented (panics "time not implemented on this
+/// platform"), while `web_time::Instant` maps to the JS `performance` clock.
+#[cfg(test)]
+fn now() -> tokio_time::Instant {
+    tokio_time::Instant::now()
+}
+#[cfg(not(test))]
+fn now() -> web_time::Instant {
+    web_time::Instant::now()
 }
 
-/// Sleep — `tokio::time::sleep` in tests, `worker::Delay` in production (wasm32).
 #[cfg(test)]
 async fn sleep(dur: std::time::Duration) {
     tokio_time::sleep(dur).await;
@@ -38,6 +45,9 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+// Used only with concrete generics (no dyn/Send bounds needed anywhere), so
+// the async-fn-in-trait lint's concern doesn't apply.
+#[allow(async_fn_in_trait)]
 pub trait HttpFetch {
     async fn post_json(&self, url: &str, token: &str, body: &serde_json::Value, timeout_secs: u64) -> std::result::Result<HttpResponse, AppError>;
 }
@@ -92,8 +102,13 @@ impl HttpFetch for RealHttpFetch {
 
 // --- GraphQL execution layer ---
 
-pub(crate) async fn execute_graphql<F, R>(
+/// Execute one GraphQL call against `graphql_url` with retries. The URL is
+/// threaded as a parameter from callers: domain fetchers pin the production
+/// const, tests point it at their mock server. `timeout_secs` is the whole
+/// retry-cycle budget (see `execute_with_retries`).
+pub async fn execute_graphql<F, R>(
     fetcher: &F,
+    graphql_url: &str,
     token: &str,
     query: &str,
     variables: serde_json::Value,
@@ -106,7 +121,7 @@ where
     let timeout = timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
     let payload = json!({ "query": query, "variables": variables });
 
-    let resp = execute_with_retries::<F, GraphQLResponse<R>>(fetcher, token, &payload, timeout).await?;
+    let resp = execute_with_retries::<F, GraphQLResponse<R>>(fetcher, graphql_url, token, &payload, timeout).await?;
     let cost = resp.extensions.as_ref().map(|e| e.cost.actual_cost).unwrap_or(0);
 
     if let Some(errors) = resp.errors {
@@ -123,6 +138,7 @@ where
 
 async fn execute_with_retries<F, R>(
     fetcher: &F,
+    graphql_url: &str,
     token: &str,
     payload: &serde_json::Value,
     timeout_secs: u64,
@@ -134,8 +150,20 @@ where
     let max_retries = 5;
     let mut retry_count = 0;
 
+    // The budget covers the entire cycle — every attempt and every backoff
+    // sleep. Once elapsed time reaches it, give up immediately instead of
+    // retrying past the caller's total wall time.
+    let deadline = now() + std::time::Duration::from_secs(timeout_secs);
+
     loop {
-        let resp = fetcher.post_json(GITHUB_GRAPHQL_URL, token, payload, timeout_secs).await?;
+        if now() >= deadline {
+            return Err(AppError::Timeout(format!(
+                "Request timeout budget of {} seconds exhausted",
+                timeout_secs
+            )));
+        }
+
+        let resp = fetcher.post_json(graphql_url, token, payload, timeout_secs).await?;
 
         let is_rate_limited = resp.status == 429
             || (resp.status == 403 && resp.headers.get("X-RateLimit-Remaining").map(|s| s.as_str()) == Some("0"));
@@ -157,7 +185,7 @@ where
         if resp.status != 200 {
             let body = String::from_utf8_lossy(&resp.body).to_string();
             return match resp.status {
-                401 | 403 => Err(AppError::Unauthorized(format!("GitHub API unauthorized: {}", body))),
+                401 | 403 => Err(AppError::Unauthorized(Unauthorized::GitHubApi(format!("GitHub API unauthorized: {}", body)))),
                 400 => Err(AppError::BadRequest(format!("GitHub API bad request: {}", body))),
                 _ => Err(AppError::GitHubError(format!("GitHub API status {}: {}", resp.status, body))),
             };
@@ -173,12 +201,30 @@ where
 #[cfg(test)]
 pub struct FakeHttpFetch {
     responses: std::cell::RefCell<std::collections::VecDeque<std::result::Result<HttpResponse, AppError>>>,
+    last_timeout_secs: std::cell::Cell<Option<u64>>,
+    requests: std::cell::RefCell<Vec<serde_json::Value>>,
 }
 
 #[cfg(test)]
 impl FakeHttpFetch {
     pub fn new() -> Self {
-        Self { responses: std::cell::RefCell::new(std::collections::VecDeque::new()) }
+        Self {
+            responses: std::cell::RefCell::new(std::collections::VecDeque::new()),
+            last_timeout_secs: std::cell::Cell::new(None),
+            requests: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// The `timeout_secs` value the last fetch was given — used to assert the
+    /// config → fetcher plumbing.
+    pub fn last_timeout_secs(&self) -> Option<u64> {
+        self.last_timeout_secs.get()
+    }
+
+    /// The body of the last request the fake received (the full GraphQL
+    /// payload: `{ query, variables }`), for asserting on query variables.
+    pub fn last_request_body(&self) -> serde_json::Value {
+        self.requests.borrow().last().cloned().expect("no requests recorded")
     }
 
     pub fn push_ok(&self, status: u16, body: &str) {
@@ -213,7 +259,9 @@ impl FakeHttpFetch {
 
 #[cfg(test)]
 impl HttpFetch for FakeHttpFetch {
-    async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, _timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
+    async fn post_json(&self, _url: &str, _token: &str, _body: &serde_json::Value, timeout_secs: u64) -> std::result::Result<HttpResponse, AppError> {
+        self.last_timeout_secs.set(Some(timeout_secs));
+        self.requests.borrow_mut().push(_body.clone());
         self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
             Err(AppError::Internal("No more fake responses".to_string()))
         })
