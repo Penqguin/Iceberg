@@ -8,10 +8,16 @@ use worker::*;
 /// warmer both derive keys through this function, so they can never diverge
 /// (the old warmer built its own key from a hardcoded domain URL and stored
 /// entries no request could ever read).
+///
+/// The Workers Cache API requires keys to be fully-qualified, valid URLs, so
+/// the logical key (endpoint/user/limits) is embedded in a synthetic URL path
+/// + query instead of a namespaced string. Component values need no escaping
+/// to be URL-safe: `username` is regex-validated `[a-zA-Z0-9-]`, limits are
+/// `usize` (digits only).
 pub fn cache_key(endpoint: &str, username: &str, params: &QueryParams) -> String {
     format!(
-        "iceberg:{}:user={}:limit={}:history={}:langs={}",
-        endpoint, username, params.limit, params.history_limit, params.language_limit
+        "https://cache.iceberg/{endpoint}/{username}?limit={}&history={}&langs={}",
+        params.limit, params.history_limit, params.language_limit
     )
 }
 
@@ -44,9 +50,22 @@ mod tests {
     }
 
     #[test]
+    fn cache_key_is_a_valid_url() {
+        // The Workers Cache API rejects non-fully-qualified keys
+        // ("Cache API keys must be fully-qualified, valid URLs") — invalid
+        // keys made every cache op fail and caching never happened.
+        let key = cache_key("/v2/commits/latest", "test", &params(5, 10, 3));
+        assert!(key.starts_with("https://"), "key must be a fully-qualified URL: {key}");
+        assert!(worker::Url::parse(&key).is_ok(), "key must parse as a URL: {key}");
+    }
+
+    #[test]
     fn cache_key_encodes_all_scopes() {
         let key = cache_key("/v2/commits/latest", "test", &params(5, 10, 3));
-        assert_eq!(key, "iceberg:/v2/commits/latest:user=test:limit=5:history=10:langs=3");
+        assert_eq!(
+            key,
+            "https://cache.iceberg//v2/commits/latest/test?limit=5&history=10&langs=3"
+        );
     }
 }
 

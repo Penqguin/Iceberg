@@ -16,14 +16,16 @@ const DEFAULT_TIMEOUT_SECS: u64 = 15;
 
 /// Sleep — `tokio::time::sleep` in tests, `worker::Delay` in production (wasm32).
 /// Clock seam — tokio's mock clock under test (tracks `sleep`, so paused/advanced
-/// time moves the deadline) and the wall clock in production.
+/// time moves the deadline) and `web_time` in production: on wasm32,
+/// `std::time::Instant` is unimplemented (panics "time not implemented on this
+/// platform"), while `web_time::Instant` maps to the JS `performance` clock.
 #[cfg(test)]
 fn now() -> tokio_time::Instant {
     tokio_time::Instant::now()
 }
 #[cfg(not(test))]
-fn now() -> std::time::Instant {
-    std::time::Instant::now()
+fn now() -> web_time::Instant {
+    web_time::Instant::now()
 }
 
 #[cfg(test)]

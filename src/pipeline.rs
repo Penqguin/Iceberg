@@ -148,6 +148,11 @@ pub(crate) trait PipelineOut {
     fn error(err: &AppError) -> Result<Self::Out>;
     /// Stamp a lifecycle header, overriding any existing value.
     fn stamp(out: &mut Self::Out, key: &str, value: &str) -> Result<()>;
+    /// Rebuild a fully-owned Out from a stored one. Production needs this
+    /// because the Workers Cache API returns responses whose headers are
+    /// immutable — stamping `X-Cache: HIT` in place fails with "Can't modify
+    /// immutable headers".
+    async fn unfreeze(stored: Self::Out) -> Result<Self::Out>;
     /// An unmodified copy (e.g. the `X-Cache: HIT` twin handed to the store).
     fn clone_copy(out: &mut Self::Out) -> Result<Self::Out>;
 }
@@ -175,6 +180,21 @@ impl PipelineOut for ResponseOut {
 
     fn clone_copy(out: &mut Response) -> Result<Response> {
         out.cloned()
+    }
+
+    /// The Workers Cache API returns responses with frozen headers; rebuild
+    /// a fully-owned response (own bytes, copied headers) so lifecycle
+    /// headers can be stamped on the way out.
+    async fn unfreeze(mut stored: Response) -> Result<Response> {
+        let status = stored.status_code();
+        let bytes = stored.bytes().await?;
+        let mut headers = Headers::new();
+        for (key, value) in stored.headers().entries() {
+            headers.set(&key, &value)?;
+        }
+        Ok(Response::from_body(ResponseBody::Body(bytes))?
+            .with_status(status)
+            .with_headers(headers))
     }
 }
 
@@ -297,7 +317,8 @@ where
             None
         }
     };
-    if let Some(mut cached) = hit {
+    if let Some(cached) = hit {
+        let mut cached = Out::unfreeze(cached).await?;
         Out::stamp(&mut cached, "X-Cache", "HIT")?;
         return Ok(cached);
     }
@@ -623,6 +644,10 @@ mod tests {
                 headers: out.headers.clone(),
                 body: out.body.clone(),
             })
+        }
+
+        async fn unfreeze(stored: crate::TestResponse) -> Result<crate::TestResponse> {
+            Ok(stored) // test doubles carry mutable copies already
         }
     }
 

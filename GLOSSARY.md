@@ -18,7 +18,7 @@ Domain and architecture vocabulary for iceberg. Use these terms in code, docs, a
 
 ## Architecture
 
-**Request cache** — the edge cache keyed by `(endpoint, username, limit, history_limit, language_limit)`. Key derivation lives in `src/cache.rs` (`cache_key`) and must never be duplicated elsewhere — the pipeline and the cron warmer both derive keys through it. Storage swaps at the `CacheStore` seam (`WorkersCache` adapter today; R2 adapter previously attempted and reverted, so the seam is real).
+**Request cache** — the edge cache keyed by `(endpoint, username, limit, history_limit, language_limit)`. Key derivation lives in `src/cache.rs` (`cache_key`) and must never be duplicated elsewhere — the pipeline and the cron warmer both derive keys through it. Storage swaps at the `CacheStore` seam (`WorkersCache` adapter today; R2 adapter previously attempted and reverted, so the seam is real). The Workers Cache API only accepts fully-qualified URLs as keys, so `cache_key` materializes the tuple as a synthetic `https://cache.iceberg/**` URL; a non-URL key makes every cache op fail and caching silently never happens.
 
 **Request pipeline** — the per-request choreography in `src/pipeline.rs` (`run_pipeline`): config → params → cache → auth → handler → response → cache-store. Owns the `X-Cache` and `Cache-Control` headers.
 

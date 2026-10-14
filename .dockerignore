@@ -1,0 +1,13 @@
+# Secrets — never in the build context
+.dev.vars
+.dev.vars.*
+.env
+
+# Git / Rust artifacts
+.git
+target
+build
+.wrangler
+node_modules
+dist
+*.log

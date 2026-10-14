@@ -17,6 +17,7 @@ console_error_panic_hook = "0.1.7"
 futures = "0.3"
 regex = "1.10"
 once_cell = "1.18"
+web-time = "1"
 
 [features]
 # Enables the shared test-fixture builders for the criterion bench target

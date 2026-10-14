@@ -1,5 +1,7 @@
 /target
 .env
+.dev.vars
+.dev.vars.*
 .idea/
 *.log
 .wrangler/
