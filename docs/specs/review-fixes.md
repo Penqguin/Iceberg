@@ -164,10 +164,31 @@ shrink every signature. Judgement call — do it opportunistically, not as its o
 
 ## Deferred (explicitly out of scope for now)
 
-- **Batch GraphQL (`execute_graphql_batch()`)** — carried over from the old spec as its
-  top-priority item, but re-scoped honestly: each endpoint currently issues exactly one
-  query, so true batching has no caller. It becomes worthwhile only when an endpoint
-  needs two datasets (e.g. commits + streak in one response) via GraphQL aliases.
-  Revisit if/when such an endpoint is added.
-- **Cache hit/miss metrics** — needs an agreed metrics sink; open a separate ticket.
-- **`AppError::CacheError` variant** — subsumed by item 1's graceful degradation.
+Reviewed 2026-10-14 against the shipped code (`main` @ `a4a8ae2`, deployed and
+live-verified):
+
+- **Batch GraphQL (`execute_graphql_batch()`)** — the old spec's premise (one request
+  firing several queries) no longer holds: every request issues exactly ONE GraphQL
+  query today, so request-path batching has no caller. The one place multiple queries
+  still occur is the **cron warmer**, which fires one query per whitelisted user
+  (`scheduled` → `join_all` over `config.whitelist`). Those could alias-batch into a
+  single round trip (`u0: user(login:"a") { … } u1: user(login:"b") { … }`), but with
+  the current whitelist of **one** user it buys nothing — not one round trip saved.
+  *Trigger to re-open:* WHITELIST grows to ~2+ users (warmer does N round trips every
+  5 min), or an endpoint that genuinely needs two datasets (e.g. commits + streak in
+  one response). Until then: don't build it.
+- **Cache hit/miss metrics** — two honest phases, neither urgent:
+  1. *Zero-code*: logging only. `run_pipeline` already knows the HIT/MISS outcome —
+     add one `console_log!` line per request (`cache_hit|miss, endpoint, key`) and
+     enable Workers Observability (`[observability] enabled = true` in
+     `wrangler.toml`); the dashboard query API can then count cache outcomes with no
+     new bindings or quota concerns. The `log_warn!` cache-failure lines already
+     exist and would count as miss-shaped events.
+  2. *Proper sink (only if dashboards are needed)*: Workers Analytics Engine binding
+     (`writeInflux` line per request). Small diff, but it adds a dataset + binding
+     dependency — don't do phase 2 until phase 1's counts feel too coarse.
+- **`AppError::CacheError` variant** — closed as dead by design, not merely deferred:
+  the spec (T1) requires cache failures to degrade gracefully, so such an error is
+  never allowed to reach a response. It would only ever classify a log line, which
+  the existing `log_warn!("cache … failed for {key} …")` already does. Remove it
+  from future considerations.
