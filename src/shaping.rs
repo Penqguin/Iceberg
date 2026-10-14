@@ -6,17 +6,18 @@ use std::collections::{HashMap, HashSet};
 
 /// Product rules applied to raw GitHub data before it's served.
 /// Only whitelisted (owner) profiles carry an exclusion list.
+/// Public so external benches/tests can shape synthetic repos.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ShapingRules {
+pub struct ShapingRules {
     pub(crate) excluded_repos: Vec<String>,
 }
 
 impl ShapingRules {
-    pub(crate) fn none() -> Self {
+    pub fn none() -> Self {
         Self { excluded_repos: Vec::new() }
     }
 
-    pub(crate) fn new(excluded_repos: Vec<String>) -> Self {
+    pub fn new(excluded_repos: Vec<String>) -> Self {
         Self { excluded_repos }
     }
 
@@ -53,8 +54,8 @@ pub(crate) fn matches_author(commit: &GqlCommit, username: &str) -> bool {
 
 /// Shape raw repository nodes into the served profile: filter exclusions,
 /// collect the author's commits, roll up languages, compute stats over the
-/// history window, trim to `limit`.
-pub(crate) fn shape_commits(
+/// history window, trim to `limit`. Pure: struct-in → struct-out, no runtime.
+pub fn shape_commits(
     repos: Vec<RepositoryNode>,
     username: &str,
     limit: usize,

@@ -1,12 +1,17 @@
 use worker::*;
 
 mod cache;
-mod error;
-mod github;
 mod logging;
-mod models;
 mod pipeline;
-mod shaping;
+
+// Public test/API surface: everything below is reachable from outside the
+// crate (integration tests, benches). `github`'s execution layer
+// (`execute_graphql` + `HttpFetch`) is the seam external HTTP tests go through;
+// `shaping::shape_commits` is the pure hot path the benchmark exercises.
+pub mod error;
+pub mod github;
+pub mod models;
+pub mod shaping;
 
 use crate::cache::{cache_key, CacheStore, WorkersCache};
 use crate::error::AppError;

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::client::{execute_graphql, FakeHttpFetch, HttpResponse};
+use super::client::{execute_graphql, FakeHttpFetch, GITHUB_GRAPHQL_URL, HttpResponse};
 use super::client::HttpFetch;
 use super::streak::{calculate_current_streak, calculate_highest_streak, is_active};
 use super::types::*;
@@ -490,7 +490,7 @@ impl HttpFetch for AlwaysRateLimited {
 #[tokio::test(start_paused = true)]
 async fn always_rate_limited_exhausts_deadline_returns_timeout() {
     let result: std::result::Result<(serde_json::Value, u64), AppError> =
-        execute_graphql(&AlwaysRateLimited, "token", "query { x }", serde_json::json!({}), Some(3)).await;
+        execute_graphql(&AlwaysRateLimited, GITHUB_GRAPHQL_URL, "token", "query { x }", serde_json::json!({}), Some(3)).await;
 
     match result.unwrap_err() {
         AppError::Timeout(msg) => assert!(msg.contains("budget"), "unexpected message: {}", msg),
@@ -506,7 +506,7 @@ async fn rate_limited_twice_then_success_within_budget_succeeds() {
     fake.push_ok(200, r#"{"data":{"ok":true}}"#);
 
     let (data, _cost): (serde_json::Value, u64) =
-        execute_graphql(&fake, "token", "query { x }", serde_json::json!({}), Some(10)).await.unwrap();
+        execute_graphql(&fake, GITHUB_GRAPHQL_URL, "token", "query { x }", serde_json::json!({}), Some(10)).await.unwrap();
     assert_eq!(data["ok"], serde_json::json!(true));
 }
 
