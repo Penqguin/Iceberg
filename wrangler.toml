@@ -7,8 +7,10 @@ enabled = true
 head_sampling_rate = 1
 
 [triggers]
-# Warmer skips entries that already exist (TTL 300s), so the cron frequency
-# only controls how often we check, not how often we fetch.
+# Warmer skips entries that already exist (TTL 3600s), so the cron frequency
+# only controls how often we check, not how often we fetch. Keeps the
+# portfolio's exact query (limit=5, history_limit=70, langs=3) warm almost
+# continuously; a GitHub-backed miss at most once per hour.
 crons = ["*/5 * * * *"]
 
 [env.production]

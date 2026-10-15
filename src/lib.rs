@@ -121,8 +121,13 @@ async fn commits_endpoint(
 
 // --- Scheduled cache warming ---
 
-/// Warm the default v2 query for every whitelisted profile. Keys are derived
-/// by the cache module, so warmed entries are readable by real requests.
+/// Warm the v2 query the portfolio actually uses (igloo's /api/commits.json
+/// defaults: `?username=...&limit=5&history_limit=70`). The warmer used to key
+/// itself to `limit=10, history_limit=10`, a cache entry no portfolio request
+/// could read — the site still ate the full GitHub miss every TTL window.
+/// Keys are derived by the cache module, so warmed entries are readable by
+/// real requests. TTL matches the warmed Cache-Control (s-maxage=3600); the
+/// cron only controls how often we check for that expiry, not how freshly.
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
     let config = match get_config(&env) {
@@ -136,8 +141,10 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
         let rules = config.rules_for(username);
         let params = QueryParams {
             username: username.clone(),
-            limit: 10,
-            history_limit: 10,
+            // The portfolio's exact request shape (limit 5, history 70) —
+            // keep in sync with igloo's /api/commits.json defaults.
+            limit: 5,
+            history_limit: 70,
             language_limit: 3,
         };
         let key = cache_key("/v2/commits/latest", username, &params);
@@ -153,7 +160,7 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
                 config.request_timeout_secs,
             ).await {
                 if let Ok(mut resp) = ResponseBuilder::new()
-                    .with_header("Cache-Control", "s-maxage=300")
+                    .with_header("Cache-Control", "s-maxage=3600")
                     .with_header("X-Query-Cost", &cost.to_string())
                     .json(&commits)
                 {
@@ -193,7 +200,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/commits/latest", |req, ctx| async move {
             commits_endpoint(req, ctx, EndpointConfig {
                 name: "/commits/latest",
-                cache: CachePolicy { ttl_secs: 300 },
+                cache: CachePolicy { ttl_secs: 3600 },
                 fixed_params: Some(FixedParams { limit: 5, history_limit: 5, language_limit: 3 }),
             }).await
         })
@@ -201,7 +208,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v2/commits/latest", |req, ctx| async move {
             commits_endpoint(req, ctx, EndpointConfig {
                 name: "/v2/commits/latest",
-                cache: CachePolicy { ttl_secs: 300 },
+                cache: CachePolicy { ttl_secs: 3600 },
                 fixed_params: None,
             }).await
         })
